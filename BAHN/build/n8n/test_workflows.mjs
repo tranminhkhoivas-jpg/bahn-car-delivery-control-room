@@ -250,6 +250,8 @@ assert.equal(exp.currency, 'DKK', 'CD-420710 claim is in DKK (dataset)');
 const expPlan = JSON.parse(pp('CD-420710', { lines: JSON.stringify([{ kind: 'approve_cost', expense_id: exp.id }]) }).payload);
 assert.equal(expPlan.total_cents, Math.round(exp.amount_cents / 7.46), 'DKK claim is converted to EUR');
 assert(/DKK 315 = about EUR 42\.2/.test(expPlan.steps[0].detail), 'expense line names both currencies');
+const chf = ctx('CD-420710'); chf.snapshot.expenses.find((e) => e.id === exp.id).currency = 'CHF';
+assert(/no exchange rate for it, ask a person/.test(pp('CD-420710', { lines: JSON.stringify([{ kind: 'approve_cost', expense_id: exp.id }]) }, chf).error), 'currency not in the Settings list goes to a person');
 
 // ---------- act executor ----------
 const act = (plan, body = {}, { c = ctx('CD-420537'), status = 'pending', r = { ok: false }, rationale = '' } = {}) => one('act_proposal_decision.json', 'Re-check and execute (mock)', {

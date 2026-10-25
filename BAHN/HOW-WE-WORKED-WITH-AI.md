@@ -48,7 +48,7 @@ On this page "we" means the team (one person); "the AI" means the coding agents.
 
 All found in live test runs, then fixed and re-tested:
 
-- **Money:** a Danish-krone receipt (DKK 315) was shown as EUR 315. Now converted, and unknown currencies are refused.
+- **Money:** a Danish-krone receipt (DKK 315) was shown as EUR 315. Now converted with a rate list staff edit on the Settings page; a currency not on the list goes to a person instead of being guessed.
 - **Too early:** the agent booked a tow before the buyer chose how to recover the car. Now the buyer is asked first.
 - **Asking twice:** a follow-up asked the buyer again after they had already agreed. Fixed with a shared rule.
 - **Wrong "on time":** a journey check ignored the driver app's own arrival estimate and called a late car on time. Now it uses the later of the two.

@@ -117,7 +117,11 @@ const have = new Set((await api('GET', `/data-tables/${idMap.SettingsTable001}/r
 const add = Object.entries(SETTING_DEFAULTS).filter(([k]) => !have.has(k))
   .map(([key, [value, unit, section, description]]) => ({ key, value: String(value), unit, section, description }));
 if (add.length) await api('POST', `/data-tables/${idMap.SettingsTable001}/rows`, { data: add });
-console.log(`settings: ${add.length} added, ${have.size} kept`);
+// Keys no longer in lib/settings.js (renamed or removed) are dropped so the Settings page shows only live ones.
+const gone = [...have].filter((k) => !(k in SETTING_DEFAULTS));
+for (const key of gone) await api('DELETE', `/data-tables/${idMap.SettingsTable001}/rows/delete?filter=${encodeURIComponent(JSON.stringify(
+  { type: 'and', filters: [{ columnName: 'key', condition: 'eq', value: key }] }))}`);
+console.log(`settings: ${add.length} added, ${gone.length} removed (${gone.join(', ') || 'none'}), ${have.size - gone.length} kept`);
 
 const creds = await listAll('/credentials');
 for (const [oldId, c] of Object.entries(CREDS)) {
