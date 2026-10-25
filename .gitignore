@@ -38,3 +38,7 @@ ai-docs/features/F-013-*.md
 ai-docs/features/F-014-*.md
 ai-docs/features/F-016-*.md
 ai-docs/features/F-017-*.md
+
+# Master doc hook state (local only)
+ai-docs/.mdoc-state.json
+ai-docs/.mdoc-acks.log

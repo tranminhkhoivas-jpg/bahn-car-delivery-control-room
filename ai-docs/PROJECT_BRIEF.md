@@ -60,6 +60,7 @@ Event hub: https://prompthack.aaltoes.com/hackathon-04. The user confirmed on 20
 - The dedicated "BAHN ONLY - How we worked with AI" section records requests, outputs, human decisions, corrections/rejections, checks and evidence for Bahn's 30% criterion. Initial preparation entries exist; no implementation results or exported traces exist. Maintain it during meaningful Bahn work.
 - All 8 sample events (vehicle, journey, destination, tracking, incident, documents, expenses, unreachable driver) have been run live; the expenses run fixed DKK-to-EUR conversion and the destination run made the journey check honour the driver app ETA (F-010).
 - A train/flight trip home was booked (mock) after approval on 2026-10-24 (F-010).
+- Public repo: https://github.com/tranminhkhoivas-jpg/bahn-car-delivery-control-room (git root = project root; only Bahn files and the master doc without Velho feature files are tracked; see F-004).
 - Next: pick hosting for the demo; more area agents on the shared contract (F-012 README); rerun setup.mjs on a fresh n8n; fresh-clone steps are in BAHN/README.md (not yet tried on a fresh clone); all open tests listed in BAHN/TESTS.md for Gemini AGY; tune GLiDE thresholds; reset demo data before recording. F-004 owns the required 2-3 minute video, runnable public repo and track rules. Shared deadline-clock uncertainty below still applies.
 
 ### Velho only - F-003

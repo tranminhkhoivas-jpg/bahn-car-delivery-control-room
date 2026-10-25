@@ -1,6 +1,9 @@
 # Changelog
 <!-- Newest at TOP. One line per change. Not read by default; read only to trace history. -->
 <!-- Format: YYYY-MM-DD | model (harness) | F-### or BRIEF | added/edited/replaced/removed | what changed; if replaced, what the old way was and why it was dropped -->
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Public GitHub repo tranminhkhoivas-jpg/bahn-car-delivery-control-room created and main pushed (user OK); master doc hook state files git-ignored
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | AGY CLI made the local git repo (commit 4e3c7c1, 429 files, no remote); Claude verified contents and secret scan; push waits for user OK
+2026-10-25 | claude-opus-5-5 (Claude Code) | F-011 | edited | Pushed song seed + audit fixes to GitHub (d34988a); song card no longer claims 60 seconds
 2026-10-25 | claude-opus-5-5 (Claude Code) | F-013 | edited | Approved quick tunnel restarted by the user; new URL recorded, old URL removed.
 2026-10-25 | claude-opus-5-5 (Claude Code) | F-011 | edited | Lyric video redesigned per user: line-by-line lyrics, moving background, company visuals and fact cards; server rebuilt; tunnel restart blocked by permission.
 2026-10-25 | gpt-6.1-sol via Codex | F-017, F-011, F-013, BRIEF | edited | Verified confirmed repairs: 18 targeted and 23 original regressions, build/typecheck, 14-page runtime and browser paths pass; patched server local on 3015; old public hostname unavailable; quality expansion deferred.
