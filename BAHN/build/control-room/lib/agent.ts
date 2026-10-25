@@ -16,8 +16,13 @@ type N8nRow = Record<string, unknown> & { id: number; createdAt: string; updated
 /** proposalId 0 = an urgent staff task from escalate_urgent (no approval step). costCents comes from the approved plan line. */
 export type AgentStep = { id: number; proposalId: number; no: number; kind: string; label: string; detail: string; status: string; ref: string; attempts: number; note: string; updatedBy: string; superseded: boolean; costCents: number | null
   /** A reminder draft (step R1, R2) from otr_reminders; marking it done sends it. */
-  reminder: boolean }
-export type PlanLine = { kind: string; detail: string; cost_cents: number }
+  reminder: boolean
+  /** Still marked waiting, but its plan was replaced, expired, rejected or declined: nothing to do. */
+  stale: boolean }
+const DEAD_PLAN = ["replaced", "expired", "rejected", "declined"]
+export type PlanLine = { kind: string; detail: string; cost_cents: number; edited_by?: string }
+/** action: the bold "what to do"; detail: one short line of context. */
+export type Todo = { action: string; detail?: string; anchor: string; urgent?: boolean }
 export type PlanOption = { key: string; names: string[]; arrives_local: string; on_time?: boolean; late_hours?: number; total_eur: number; steps: PlanLine[] }
 export type AgentProposal = {
   id: number; action: string; label: string; status: string; summary: string; detail: string
@@ -30,13 +35,33 @@ export type AgentLine = { id: number; actor: string; kind: string; text: string;
 export type AgentMessage = { id: number; role: string; direction: string; kind: string; text: string; status: string; at: string }
 export type AgentCase = {
   orderRef: string; status: string; owner: string; summary: string; updatedAt: string
-  needsPerson: string[]; proposals: AgentProposal[]; timeline: AgentLine[]; messages: AgentMessage[]
+  /** What a person must do now; anchor is the element id of the step or plan that does it. */
+  todo: Todo[]
+  /** What the case waits for from others (buyer, the agent, a colleague); nothing for this person to do. */
+  waitingOn: string[]
+  proposals: AgentProposal[]; timeline: AgentLine[]; messages: AgentMessage[]
   /** Urgent staff tasks from escalate_urgent; they need no approval. */
   escalations: AgentStep[]
   /** Problem workflows the router put on the case (latest routing). */
   workflows: string[]
   /** The agent's latest run report, when it is the newest thing on the case. */
   report: AgentLine | null
+  /** Staff who left their name on a decision, step or note on this order (each once, oldest first). */
+  handledBy: string[]
+  /** The staff member whose name is on the newest such record. */
+  lastHandler: string
+}
+
+// Names the system writes in decided_by, updated_by and actor columns: not people.
+const NOT_STAFF = /^(|ops|agent|router|follow_up|control_room|alert|telegram|system|act workflow|propose_action|reminders|ops \(control room\)|buyer via telegram)$|\(simulated|workflow|^driver\b/i
+/** Staff names on one order, from the records n8n and the control room already write; no extra table. */
+function staffTouches(orderRef: string, proposals: N8nRow[], steps: N8nRow[], timeline: N8nRow[]): { name: string; at: string }[] {
+  const out: { name: string; at: string }[] = []
+  const add = (raw: unknown, at: string) => { const name = str(raw).replace(/^operator\s+/i, "").trim(); if (name && !NOT_STAFF.test(name)) out.push({ name, at }) }
+  for (const row of proposals) add(row.decided_by, row.updatedAt)
+  for (const row of steps) add(row.updated_by, row.updatedAt)
+  for (const row of timeline) { const actor = str(row.actor); add(actor.match(/^staff \((.+)\)$/)?.[1] ?? (/^operator\s/i.test(actor) ? actor : ""), row.createdAt) }
+  return out.sort((a, b) => a.at.localeCompare(b.at))
 }
 
 async function call(path: string, init?: RequestInit): Promise<unknown> {
@@ -71,11 +96,12 @@ async function rows(name: string): Promise<N8nRow[]> {
 }
 
 const str = (value: unknown) => value == null ? "" : String(value)
+const short = (text: string, n = 120) => { const one = text.replace(/\s+/g, " ").trim(); return one.length > n ? `${one.slice(0, n - 1).trimEnd()}…` : one }
 const parse = (value: unknown): Record<string, unknown> => { try { const out = JSON.parse(str(value)); return out && typeof out === "object" ? out : {} } catch { return {} } }
 
 export async function loadAgentCases(): Promise<AgentCase[]> {
   const [cases, timeline, proposals, steps, messages] = await Promise.all(["otr_cases", "otr_timeline", "otr_proposals", "otr_plan_steps", "otr_messages"].map(rows))
-  const refs = new Set([...cases, ...proposals, ...timeline].map((row) => str(row.order_ref)).filter(Boolean))
+  const refs = new Set([...cases, ...proposals, ...timeline].map((row) => str(row.order_ref)).filter((ref) => /^CD-\d+$/.test(ref)))
   return [...refs].map((orderRef) => {
     const caseRow = cases.filter((row) => row.order_ref === orderRef).at(-1)
     const orderSteps = steps.filter((row) => row.order_ref === orderRef)
@@ -83,12 +109,15 @@ export async function loadAgentCases(): Promise<AgentCase[]> {
     const rebooked = (row: N8nRow) => /^book_/.test(str(row.kind)) && orderSteps.some((q) => q.kind === row.kind && q.status === "done" && q.id > row.id)
     const orderProposals = proposals.filter((row) => row.order_ref === orderRef)
     const planLines = new Map(orderProposals.map((row) => [row.id, (parse(parse(row.payload).detail).steps ?? []) as PlanLine[]]))
+    // A step still "waiting" on a plan that was replaced, expired, rejected or declined can no longer do anything.
+    const deadPlans = new Set(orderProposals.filter((row) => DEAD_PLAN.includes(str(row.status))).map((row) => row.id))
     const stepViews: AgentStep[] = orderSteps.map((row) => ({
       id: row.id, proposalId: Number(row.proposal_id) || 0, no: Number(str(row.step_no).replace(/^R/, "")) || 0, kind: str(row.kind), label: STEP_LABELS[str(row.kind)] ?? str(row.kind),
       detail: str(row.detail), status: str(row.status), ref: str(row.ref), attempts: Number(row.attempts) || 0, note: str(row.note), updatedBy: str(row.updated_by),
       superseded: row.status === "failed" && rebooked(row),
       costCents: planLines.get(Number(row.proposal_id))?.[Number(row.step_no) - 1]?.cost_cents ?? null,
       reminder: /^R\d+$/.test(str(row.step_no)),
+      stale: row.status === "waiting_for_person" && deadPlans.has(Number(row.proposal_id)),
     })).sort((a, b) => a.proposalId - b.proposalId || a.no - b.no)
     const proposalViews: AgentProposal[] = orderProposals.map((row) => {
       const payload = parse(row.payload)
@@ -112,24 +141,58 @@ export async function loadAgentCases(): Promise<AgentCase[]> {
     // Tasks (proposal_id "task") carry their priority in ref (urgent | top | normal); normal tasks and reminder drafts are not urgent.
     const openUrgent = stepViews.find((s) => s.proposalId === 0 && s.kind === "staff_task" && s.ref !== "normal" && s.status === "waiting_for_person")
     const urgent = caseRow?.status === "urgent" || !!openUrgent
-    const needsPerson = [...new Set([
-      ...(urgent ? [openUrgent?.note.startsWith("Urgent") ? openUrgent.note : `Urgent: ${str(caseRow?.summary).replace(/^URGENT: /, "")}`] : []),
-      ...proposalViews.filter((p) => p.status === "pending").map((p) => `${p.label} #${p.id} waits for approval`),
-      ...stepViews.filter((s) => s.status === "waiting_for_person").map((s) => `${s.label} waits for a person`),
-      ...stepViews.filter((s) => s.status === "failed" && !s.superseded).map((s) => `${s.label} failed`),
-      ...(caseRow?.status === "needs_decision" && !pending ? ["Case needs a decision"] : []),
-      ...(report && !pending && caseRow?.status !== "closed_by_agent" ? ["The agent's last run asks for your call; read its report"] : []),
-    ])]
+    // What a person must do now, in plain words, each pointing at the button that does it. Waiting on others is listed apart.
+    const newest = proposalViews[0]
+    const older = (s: AgentStep) => !!newest && s.proposalId > 0 && s.proposalId < newest.id
+    const planOf = (s: AgentStep) => s.proposalId ? ` (plan #${s.proposalId}${older(s) ? ", an older plan" : ""})` : ""
+    const todo: Todo[] = []
+    const waitingOn: string[] = []
+    if (urgent) todo.push({ urgent: true, anchor: openUrgent ? `step-${openUrgent.id}` : `case-${orderRef}`, action: "Urgent: do this first",
+      detail: short((openUrgent?.note.startsWith("Urgent") ? openUrgent.note : openUrgent?.detail || str(caseRow?.summary)).replace(/^urgent:\s*/i, "")) })
+    for (const p of proposalViews.filter((p) => p.status === "pending")) {
+      const check = p.steps.find((s) => s.ref === "before_booking" && s.status === "waiting_for_person")
+      todo.push(check ? { anchor: `step-${check.id}`, action: `Check, then approve or reject plan #${p.id}`, detail: short(check.detail) }
+        : { anchor: `plan-${p.id}`, action: `Approve or reject plan #${p.id}`, detail: short(p.summary) })
+    }
+    // Tasks left open on plans older than the newest: one line, not one per task (test runs leave many near-copies).
+    const leftovers = stepViews.filter((s) => s.status === "waiting_for_person" && !s.stale && older(s))
+    if (leftovers.length) todo.push({ anchor: `step-${leftovers[0].id}`, ...(leftovers.length === 1
+      ? { action: `Finish the task left on older plan #${leftovers[0].proposalId}`, detail: short(leftovers[0].detail) }
+      : { action: `Finish ${leftovers.length} tasks left on older plans`, detail: `Plans #${[...new Set(leftovers.map((s) => s.proposalId))].join(", #")}. Mark each done, or "can't be done" if no longer needed.` }) })
+    for (const s of stepViews.filter((s) => s.status === "waiting_for_person" && s !== openUrgent && !s.stale && !leftovers.includes(s))) {
+      const anchor = `step-${s.id}`
+      const who = s.kind === "customer_message" ? "buyer" : s.kind === "notify_driver" ? "driver" : "delivery contact"
+      if (s.ref === "before_booking") { if (!proposalViews.some((p) => p.id === s.proposalId && p.status === "pending")) todo.push({ anchor, action: "Check before booking", detail: short(s.detail) }) }
+      else if (s.kind === "buyer_decision") {
+        const until = proposalViews.find((p) => p.id === s.proposalId)?.plan?.valid_until_local
+        waitingOn.push(`The buyer's answer to plan #${s.proposalId}${until ? ` (offer valid until ${until}, buyer's time)` : ""}. If they answered by phone or email, record it on the plan.`)
+      } else if (s.reminder) todo.push({ anchor, action: `Send or skip reminder to the ${who}` })
+      else if (s.kind === "customer_message" && s.no === 0 && s.proposalId > 0) todo.push({ anchor, action: "Send or skip notice to the buyer", detail: `"An updated offer is coming"` })
+      else if (s.kind === "customer_message" || s.kind === "delivery_contact_message") todo.push({ anchor, action: `Send the message to the ${who}`, detail: `Plan #${s.proposalId}. Send it yourself, then press "I sent it".` })
+      else if (s.kind === "staff_task") todo.push({ anchor, action: `Do task${planOf(s)}`, detail: short(s.detail) })
+      else todo.push({ anchor, action: `${s.label}${planOf(s)}` })
+    }
+    // A failed booking is the agent's to re-plan; only a hotel can be retried by a person. Once a newer plan exists the failure is history.
+    for (const s of stepViews.filter((s) => s.status === "failed" && !s.superseded && /^book_/.test(s.kind) && !older(s))) {
+      if (s.kind === "book_hotel") todo.push({ anchor: `step-${s.id}`, action: `Retry the failed hotel booking (plan #${s.proposalId})`, detail: "Or wait for the agent's new plan." })
+      else waitingOn.push(`The agent's new plan: ${s.label.toLowerCase()} failed on plan #${s.proposalId}.`)
+    }
+    for (const p of proposalViews.filter((p) => p.status === "deciding")) waitingOn.push(`Someone is deciding plan #${p.id} right now.`)
+    if (!todo.length && caseRow?.status === "needs_decision" && !pending) todo.push({ anchor: `note-${orderRef}`, action: "Decide: the agent asks you", detail: "Read its latest note." })
+    if (!todo.length && !waitingOn.length && report && !["closed_by_agent", "in_progress", "waiting_on_person"].includes(str(caseRow?.status)))
+      todo.push({ anchor: `note-${orderRef}`, action: "Read the agent's latest note", detail: "It may ask you something." })
+    const touches = staffTouches(orderRef, orderProposals, orderSteps, timeline.filter((row) => row.order_ref === orderRef))
     return {
+      handledBy: [...new Map(touches.map((t) => [t.name.toLowerCase(), t.name])).values()], lastHandler: touches.at(-1)?.name ?? "",
       orderRef, status: urgent ? "urgent" : str(caseRow?.status) || "open", owner: str(caseRow?.owner), summary: str(caseRow?.summary),
-      needsPerson, proposals: proposalViews,
+      todo, waitingOn, proposals: proposalViews,
       timeline: lines, report,
       messages: messages.filter((row) => row.order_ref === orderRef).map((row) => ({ id: row.id, role: str(row.role), direction: str(row.direction), kind: str(row.kind), text: str(row.text), status: str(row.status), at: row.createdAt })).sort((a, b) => a.id - b.id),
       escalations: stepViews.filter((step) => step.proposalId === 0),
       workflows: route ? route.ref.replace(/^route:/, "").split(",").filter(Boolean) : [],
       updatedAt: [caseRow?.updatedAt, lines[0]?.at, ...proposals.filter((row) => row.order_ref === orderRef).map((row) => row.updatedAt)].filter(Boolean).sort().at(-1) ?? "",
     }
-  }).sort((a, b) => Number(b.status === "urgent") - Number(a.status === "urgent") || b.needsPerson.length - a.needsPerson.length || b.updatedAt.localeCompare(a.updatedAt))
+  }).sort((a, b) => Number(b.status === "urgent") - Number(a.status === "urgent") || Number(b.todo.length > 0) - Number(a.todo.length > 0) || b.updatedAt.localeCompare(a.updatedAt)) // a long to-do list is not more urgent
 }
 
 /** Incoming Telegram messages the bot could not link to an order (staff were asked "which order?"). */
@@ -150,8 +213,10 @@ export async function runCommand(input: Record<string, unknown>): Promise<unknow
     if (input.simulate && !SIMULATE.includes(str(input.simulate))) throw new Error("unknown test failure")
     if (input.option && !/^[A-Z]$/.test(str(input.option))) throw new Error("option must be a letter")
     if (input.send && input.send !== "ask_buyer") throw new Error("send must be ask_buyer")
+    if (input.decision === "reject" && !note.trim()) throw new Error("write why you reject the plan; the agent uses it to make a better one")
     return call("/webhook/bahn/act", { method: "POST", body: JSON.stringify({
       proposal_id: Number(input.proposal_id), decision: input.decision, operator, note, ...(input.simulate ? { simulate: input.simulate } : {}),
+      ...(input.confirm_unclear === true ? { confirm_unclear: true } : {}),
       ...(input.option ? { option: input.option } : {}), ...(input.send ? { send: input.send } : {}),
     }) })
   }
@@ -175,7 +240,30 @@ export async function runCommand(input: Record<string, unknown>): Promise<unknow
     if (!["done", "failed", "retry"].includes(str(input.outcome))) throw new Error("outcome must be done, failed or retry")
     const time = str(input.time)
     if (time && Number.isNaN(Date.parse(time))) throw new Error("time must be a date and time")
-    return call("/webhook/bahn/step", { method: "POST", body: JSON.stringify({ step_id: Number(input.step_id), outcome: input.outcome, operator, note, ...(time ? { time } : {}) }) })
+    if (input.outcome === "failed" && !note.trim()) throw new Error("write why it could not be done")
+    return call("/webhook/bahn/step", { method: "POST", body: JSON.stringify({ step_id: Number(input.step_id), outcome: input.outcome, operator, note, ...(time ? { time } : {}),
+      ...(input.confirm_unclear === true ? { confirm_unclear: true } : {}) }) })
+  }
+  if (input.kind === "edit_draft") {
+    // Staff rewrite a buyer or delivery-contact draft inside a plan that still waits for approval. The act workflow sends the plan line's text as it is then.
+    const text = str(input.text).trim().slice(0, 4000)
+    if (!text) throw new Error("the message cannot be empty")
+    const row = (await rows("otr_proposals")).find((r) => r.id === Number(input.proposal_id))
+    if (!row || row.status !== "pending") throw new Error("this plan is no longer waiting for approval; reload the page")
+    const payload = parse(row.payload), plan = parse(payload.detail)
+    const line = (plan.steps as PlanLine[] | undefined)?.[Number(input.index)]
+    if (!line || !["customer_message", "delivery_contact_message"].includes(line.kind)) throw new Error("only messages to the buyer or delivery contact can be edited")
+    Object.assign(line, { detail: text, edited_by: operator })
+    return call(`/api/v1/data-tables/${await tableId("otr_proposals")}/rows/update`, { method: "PATCH", body: JSON.stringify({
+      filter: { type: "and", filters: [{ columnName: "id", condition: "eq", value: row.id }, { columnName: "status", condition: "eq", value: "pending" }] },
+      data: { payload: JSON.stringify({ ...payload, detail: JSON.stringify(plan) }) } }) })
+  }
+  if (input.kind === "staff_note") {
+    // Internal note on the case: for colleagues, and read by the agent on its next run. Sent to nobody; does not wake the agent.
+    const text = str(input.text).trim().slice(0, 2000)
+    if (!/^CD-\d+$/.test(str(input.order_ref)) || !text) throw new Error("order reference and note text are required")
+    return call(`/api/v1/data-tables/${await tableId("otr_timeline")}/rows`, { method: "POST", body: JSON.stringify({
+      data: [{ order_ref: input.order_ref, actor: `staff (${operator})`, kind: "staff_note", text, source_ref: "" }] }) })
   }
   if (input.kind === "task_action") {
     // Incident task buttons. Urgent only raises the task's priority; replacement / cancel wake the agent, which files a plan a person approves.

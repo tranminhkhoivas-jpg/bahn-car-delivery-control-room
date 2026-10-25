@@ -11,6 +11,7 @@ The Bahn Express "Car Delivery Control Room" pairs an On-the-road operations age
 - **A person approves every booking, cost, date change and buyer message.** Rejecting a plan needs a reason, and the agent re-plans around it.
 - **Safety first.** A driver in danger gets "call 112" at once and a top-priority task opens for staff; the AI never judges how serious it is.
 - **Built with:** n8n (agent workflows), Claude Haiku 5.5 via OpenRouter, GLiDE v1.2 by Fastino (fast yes/no gates), Langfuse (prompt versions a person promotes), Promptfoo (prompt regression tests), Telegram (driver/buyer/staff chat), Next.js (control room). Why each: [BAHN/HOW-WE-WORKED-WITH-AI.md](BAHN/HOW-WE-WORKED-WITH-AI.md#tools-we-used-and-why).
+- **Same staff, same order when possible.** With a name typed in, the queue lists that person's own orders first (urgent ones still on top), then new ones, then orders colleagues worked; each order is tagged "Worked with before" or "Last handled by <name>". A soft preference, never a lock.
 - **Bahn can tune it.** Every wait time, margin and AI confidence level is a setting in the control room.
 
 How the team used AI to build this, including where the AI was wrong and what we decided instead: [BAHN/HOW-WE-WORKED-WITH-AI.md](BAHN/HOW-WE-WORKED-WITH-AI.md). The full engineering log is the master doc in [ai-docs/](ai-docs/INDEX.md).

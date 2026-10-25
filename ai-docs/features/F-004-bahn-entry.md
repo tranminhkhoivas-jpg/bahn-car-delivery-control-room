@@ -2,7 +2,7 @@
 
 - **Status:** in-progress
 - **Built by:** gpt-6.1-sol via Codex, 2026-10-23 (plan only)
-- **Last edited by:** claude-opus-5-5 via Claude Code, 2026-10-25
+- **Last edited by:** claude-sonnet-5-5 via Claude Code, 2026-10-25
 - **Last verified:** 2026-10-25 TESTS.md group A (setup, workflow tests, typecheck, build) passed; 2026-10-24 Bahn brief, operations context, dataset README and schema, starter README, deck and the Bahn part of `transcript.txt` read in full. The On-the-road agent (F-010) ran live on local n8n; the control-room site (F-012), a fork of the starter, ran live against it on 2026-10-24.
 
 - **Scope:** Bahn only
@@ -127,6 +127,7 @@ Agent: follow F-010's How to verify. Before submitting: fresh-clone the public r
 - Extend the control room (F-012 TODOs): an `area` column (or lane-derived area) and a cross-area router as more areas arrive.
 - Cross-delivery optimization is out of scope per Tuukka; do not pursue the previous multi-driver OR-Tools/conflict-demo suggestion for this challenge.
 - Fresh-clone README is `BAHN/README.md`. TESTS.md group A ran on 2026-10-25: setup.mjs `done`, test_workflows `ok:`, tsc and `npm run build` pass (one Turbopack warning on `lib/attachments.ts` dynamic paths). README now says to start n8n with the `.env` loaded and `N8N_BLOCK_ENV_ACCESS_IN_NODE: false`, because the Telegram workflows read `TELEGRAM_*` through `$env`. `.env.example` lists every variable name. A real fresh clone on an empty n8n is still untested.
+- Full test run 2026-10-25 (claude-sonnet-5-5 via Claude Code, per-test evidence in `BAHN/TESTS.md`): tests 1-10, 13, 14, 16, 17 pass (14 of 17); 11 FAIL (Plan cancellation gives a plan with no cancellation step; urgent and replacement work), 12 FAIL (asked time stored but no re-plan observed), 15 skipped (needs a real Telegram message), 18 not run. Fresh clone of the public repo: `npm ci`, tsc, build and offline tests pass. Findings: `test_rebooking.mjs` is cited in docs but does not exist; Promptfoo needs a fresh `npm_config_cache` (npx EEXIST); n8n needs about 3 minutes after start before its API answers; the Aalto network DNS blocks `api.telegram.org`; orders used in earlier runs (CD-420299 and others) give unrepresentative plans until the demo reset. Settings were restored (`sim_person_behaviour` answer, buyer reminder 30, employee reminder 15).
 - TESTS.md group C, demo-story tests only (2026-10-25, headless by claude-opus-5-5 via Claude Code; the rest of group C runs once building stops, before the demo reset):
   - Test 8 (ask buyer first, buyer picks) PASS: CD-420299 plan #12 offered with options A EUR 722.8 / B EUR 568.8, simulated buyer chose B on Telegram, ferry `MOCK-FERRY-120198` and hotels booked. Found and fixed: driver notice kept a placeholder instead of the chosen option; buyer step said "options A, B"; buyer text said "This offer has no deadline" next to the real reply-by line.
   - Test 11 (driver unwell, incident buttons) PASS: CD-420537 routed to incident, driver asked if safe, top task with replacement names; Mark urgent set the task to `urgent`; Replacement gave plan #13 (new driver Milo Briarmont, EUR 0).

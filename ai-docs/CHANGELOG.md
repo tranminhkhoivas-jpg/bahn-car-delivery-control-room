@@ -1,6 +1,14 @@
 # Changelog
 <!-- Newest at TOP. One line per change. Not read by default; read only to trace history. -->
 <!-- Format: YYYY-MM-DD | model (harness) | F-### or BRIEF | added/edited/replaced/removed | what changed; if replaced, what the old way was and why it was dropped -->
+2026-10-25 | claude-sonnet-5-5 (Claude Code) | F-012 | edited | Same staff for the same order when possible: handledBy/lastHandler derived from decided_by, updated_by and staff timeline actors; queue sorts own orders first (urgent still first); tags Worked with before / Last handled by; SUBMISSION-WRITEUP and README list it as built
+2026-10-25 | claude-sonnet-5-5 (Claude Code) | F-003 | edited | Velho hub draft updated to 18 tools (unpublished, not submitted)
+2026-10-25 | claude-opus-5-5 (Claude Code) | F-012 | edited | Skimmable queue: one row per order (opens into full card), sort no longer by to-do count, to-dos as bold action + one line, bold key facts, folded long text, button legends with what each needs, approve greyed while a before-booking check is open, flagged-card overflow fixed
+2026-10-25 | claude-sonnet-5-5 (Claude Code) | F-011 | edited | Seed 17 offer reduced to pay-for-result + free retry + referral; added separate seed 18 fund promise (editable size); pushed 59633ff
+2026-10-25 | claude-opus-5-5 (Claude Code) | F-012 | edited | Staff-facing UI rework: to-do and waiting lists per case, older plans greyed, required reject/can't-do reasons, editable buyer drafts (edit_draft), internal staff notes (staff_note), plain status words, queue piles, folded event panel
+2026-10-25 | claude-opus-5-5 (Claude Code) | F-003 | edited | Velho hub draft updated to 17 tools incl. No result, no fee (still unpublished, not submitted)
+2026-10-25 | claude-opus-5-5 (Claude Code) | F-011 | edited | Added seed 17 No result, no fee (pay-only-for-result terms fixed in code); pushed afd8841
+2026-10-25 | claude-sonnet-5-5 via Claude Code | F-004 | edited | Full pre-demo test run recorded in BAHN/TESTS.md: 14 of 17 pass, tests 11 and 12 fail, 15 skipped, fresh-clone check passes
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Repo aligned with the hub write-up: README knock-on bullet, judge page Promptfoo honest status; SUBMISSION-WRITEUP.md pushed
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Bahn write-up saved to the hub as private main write-up (fits limits; ready to submit except cover photo); Promptfoo claim toned down
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Write-up draft: knock-on effects bullet (whole-chain recompute, approval buffer, ferry slack, pre-booking re-check, auto re-plan, updated-offer notice, reply-by time)

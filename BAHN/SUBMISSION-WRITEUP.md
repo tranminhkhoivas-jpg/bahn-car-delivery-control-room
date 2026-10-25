@@ -21,6 +21,7 @@ What we built: one deep agent for the On-the-road area, plus the control room wh
 - Clear next step: every plan says what happens on approval (what gets booked, who gets told). Approve and book, approve and ask the buyer first, or reject with a reason and the agent re-plans around it.
 - Safe by design: a person approves every booking, cost, date change and buyer message. Every booking re-checks the current state right before it runs. Drivers can be messaged freely, as Bahn's rules allow.
 - Real conversations: drivers, buyers and staff talk to it over Telegram; buyers get messages in their own language with the English underneath.
+- Same staff, same order when possible: with a name typed in, the queue lists that person's own orders first (urgent ones still on top), then orders nobody has worked, then orders colleagues worked. Each order is tagged "Worked with before" or "Last handled by <name>". It is a soft preference, anyone can open and act on any order, and it is worked out from the names already stored on decisions, steps and notes.
 - Bahn can tune it: every wait time, margin and confidence threshold is a setting in the control room.
 
 How it works (and what's AI about it): an n8n router reads each event and picks the right problem agents (journey, vehicle, incident, documents, expenses, destination, tracking, general). The agents are Claude Haiku 5.5 with code tools. Code computes every price, time and on-time verdict; the AI gathers facts, decides what to ask, and explains. GLiDE v1.2 by Fastino is a fast yes/no judge at each gate: routing, whether a reply is clear, whether a drafted message contradicts the facts, whether a case can close. Agent instructions live in Langfuse and only go live when a person promotes a new version; Promptfoo replays 25 regression cases to test a new version. The control room is Bahn's own starter, extended. All data is Bahn's synthetic packet; bookings are mock.
@@ -32,7 +33,7 @@ How we worked with AI: Claude Code built most of it, Codex did the early researc
 - Live tests caught a DKK receipt shown as EUR, a tow booked before the buyer chose, a late car called on time, and a safety message sent after the agent's own question. Each was fixed and re-tested.
 The full decision log, with what the AI suggested next to what we decided, is in the repo (BAHN/HOW-WE-WORKED-WITH-AI.md).
 
-What's next: a staff member keeps the orders they already know, inline edits of buyer drafts, the other areas (driver travel already reuses the same re-planning engine), and real booking and map APIs behind the same approval step.
+What's next: inline edits of buyer drafts, the other areas (driver travel already reuses the same re-planning engine), and real booking and map APIs behind the same approval step.
 
 ## Links
 - Repo: https://github.com/tranminhkhoivas-jpg/bahn-car-delivery-control-room

@@ -57,11 +57,24 @@ export const STEP_LABELS: Record<string, string> = {
   approve_cost: "Approve cost",
   change_delivery_window: "New delivery window",
   reassign_driver: "Hand over to new driver",
-  notify_driver: "Tell the driver",
-  customer_message: "Send customer message",
-  delivery_contact_message: "Message delivery contact",
+  notify_driver: "Message to the driver",
+  customer_message: "Message to the buyer",
+  delivery_contact_message: "Message to the delivery contact",
   buyer_decision: "Buyer's answer",
-  staff_task: "Staff task",
+  staff_task: "Task for staff",
+  cancel_delivery: "Cancel the delivery",
+}
+
+/** Status codes from the agent tables in the words staff see. Unknown codes show with spaces. */
+export const STATUS_WORDS: Record<string, string> = {
+  // plans
+  pending: "Waiting for your approval", offered: "Sent to the buyer", deciding: "Being decided", executed: "Approved and carried out",
+  partly_executed: "Partly carried out", failed: "Failed", rejected: "Rejected", declined: "Buyer said no", expired: "Offer ran out", replaced: "Replaced by a newer plan",
+  // steps
+  waiting_for_person: "Your turn", done: "Done", skipped: "Not done",
+  // cases
+  urgent: "Urgent", needs_decision: "Needs a decision", waiting_on_person: "Waiting on the buyer", in_progress: "Agent working",
+  closed_by_agent: "Closed", open: "Open",
 }
 
 /** Router workflow ids (n8n route lines) in words. */
