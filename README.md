@@ -6,6 +6,7 @@ The Bahn Express "Car Delivery Control Room" pairs an On-the-road operations age
 
 - **One deep agent, not many shallow ones.** We chose the On-the-road area (breakdowns, missed ships, illness, delays) and built it end to end.
 - **Facts first, one decision for a person.** The agent asks the driver, checks the journey, searches ferries, trains, flights and hotels, then shows staff ONE plan per order with costs, times and its reasons.
+- **It plans for the knock-on effects.** One missed ferry moves hotel nights, the driver's rest and the buyer's delivery window, so the plan recomputes the whole chain. To keep things from getting worse: options that would leave before a person can approve are dropped; ferry bookings keep a spare margin; every booking re-checks right before it runs; a failed booking triggers a re-plan; a new problem replaces the open plan and warns a buyer holding an offer; every offer has a reply-by time.
 - **Code does the maths, AI does the talking.** Every price, time and "on time or late" is computed by code; the AI only gathers facts and explains.
 - **A person approves every booking, cost, date change and buyer message.** Rejecting a plan needs a reason, and the agent re-plans around it.
 - **Safety first.** A driver in danger gets "call 112" at once and a top-priority task opens for staff; the AI never judges how serious it is.

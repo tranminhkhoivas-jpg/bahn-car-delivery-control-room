@@ -15,7 +15,7 @@ On this page "we" means the team (one person); "the AI" means the coding agents.
 | **Claude Haiku 5.5 via OpenRouter** | The agents' reasoning and wording; also plays the simulated driver and buyer in the demo. | Fast and cheap enough for many small agent turns; OpenRouter was the event's credit provider. |
 | **GLiDE v1.2 (Fastino)** | A small, very fast yes/no judge used at every gate: which problem type an event is, whether a buyer's or employee's answer is clear, whether a simulated reply contradicts the data, whether a closed case should reopen, whether a case can close. | Our own idea, not the AI's. A big model is slow and costly for "is this answer clear?". GLiDE answers in a fraction of a second with a confidence score, and each threshold is a setting Bahn can change. In a test it scored invented driver replies 0.97+ as contradictions and an honest reply 0.01. |
 | **Langfuse** | Holds the agents' instructions as versioned prompts. A new version is saved as "candidate"; only a person promotes it to "production". | Changing what the agent is told is a change to the product, so it gets the same "a person says yes" rule as bookings. |
-| **Promptfoo** | Replays past cases against a candidate prompt and the current one and reports which passes more. | Evidence before a person promotes a prompt, instead of trusting a reworded instruction. |
+| **Promptfoo** | Replays past cases against a candidate prompt and the current one and reports which passes more. | A way to test a new version on past cases instead of trusting a reworded instruction. Honest status: the suite passes (25/25 once, routing 8/8 on the live code) but has not caught a bug yet, and AI-graded cases can score differently between runs, so one run is not enough to decide. |
 | **Telegram** (bots) | How the agent talks to drivers, buyers and staff in the demo. A second "simulated people" bot posts the simulated replies so viewers see the whole conversation. | Free, instant, works on any phone, with buttons for "which order?" and buyer choices. |
 | **Next.js control room** (Bahn's starter, PGlite) | The staff screen: the queue of cases that need a person, plans with costs, approve/reject, steps, settings. | Bahn's own starter kept their look and data model; PGlite (Postgres in-process) removed the need for Docker. |
 
@@ -42,7 +42,7 @@ On this page "we" means the team (one person); "the AI" means the coding agents.
 | Optimising across many deliveries (sharing one ferry)? | AI proposed it as a differentiator. | **Dropped.** We asked Bahn on Discord; they said it is rare and out of scope. |
 | Language to buyers? | English only. | We asked Bahn: the customer's language, usually English. **Staff approve English; the buyer receives it translated, with the English below.** |
 | Hard-coded thresholds? | Fixed numbers in code. | **Every number is a setting Bahn can change in the control room** (reply wait times, safety margins, AI confidence levels). Our values are placeholders. |
-| Changing the agent's instructions? | Edit and deploy. | **A new instruction version is tested (Promptfoo) and only goes live after a person promotes it** (Langfuse). |
+| Changing the agent's instructions? | Edit and deploy. | **A new instruction version can be tested on past cases (Promptfoo) and only goes live after a person promotes it** (Langfuse). |
 
 ## Where the AI was wrong, and how we caught it
 

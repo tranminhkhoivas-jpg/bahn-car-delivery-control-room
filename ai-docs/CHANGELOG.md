@@ -1,6 +1,11 @@
 # Changelog
 <!-- Newest at TOP. One line per change. Not read by default; read only to trace history. -->
 <!-- Format: YYYY-MM-DD | model (harness) | F-### or BRIEF | added/edited/replaced/removed | what changed; if replaced, what the old way was and why it was dropped -->
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Repo aligned with the hub write-up: README knock-on bullet, judge page Promptfoo honest status; SUBMISSION-WRITEUP.md pushed
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Bahn write-up saved to the hub as private main write-up (fits limits; ready to submit except cover photo); Promptfoo claim toned down
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Write-up draft: knock-on effects bullet (whole-chain recompute, approval buffer, ferry slack, pre-booking re-check, auto re-plan, updated-offer notice, reply-by time)
+2026-10-25 | claude-opus-5-5 (Claude Code) | F-003 | edited | Drafted separate Velho hub write-up (unpublished, not submitted) via prompthack MCP
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | added | BAHN/SUBMISSION-WRITEUP.md: draft hub write-up for Bahn mapped to the judging questions (not saved to the hub yet)
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Judge page gained "Tools we used and why" (n8n, Data Tables, Haiku via OpenRouter, GLiDE v1.2, Langfuse, Promptfoo, Telegram, Next.js/PGlite)
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Judge page voice made consistent: "we" = the team, "the AI" = coding agents
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | added | BAHN/HOW-WE-WORKED-WITH-AI.md judge page and root README "What we built and why" section; pushed
