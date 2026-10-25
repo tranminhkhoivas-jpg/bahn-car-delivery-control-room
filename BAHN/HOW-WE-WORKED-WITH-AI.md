@@ -4,15 +4,15 @@ A plain-language account for judges. The detailed engineering log (with workflow
 
 ## The setup in one paragraph
 
-One person (the team) made every product decision. Coding agents did the building: Claude Opus 5.5 in Claude Code built the agent workflows and the control room; GPT 6.1 in Codex did the early reading of Bahn's brief and the tool research; the Antigravity (AGY) CLI prepared the GitHub repository. A shared "master doc" in `ai-docs/` acted as the team's memory, so any AI chat could pick up where another left off. Every AI change had to update it the same turn, and a check blocked the AI from finishing until it did.
+On this page "we" means the team (one person); "the AI" means the coding agents. We made every product decision; the AI did the building: Claude Opus 5.5 in Claude Code built the agent workflows and the control room; GPT 6.1 in Codex did the early reading of Bahn's brief and the tool research; the Antigravity (AGY) CLI prepared the GitHub repository. A shared "master doc" in `ai-docs/` acted as the team's memory, so any AI chat could pick up where another left off. Every AI change had to update it the same turn, and a check blocked the AI from finishing until it did.
 
 ## Rules we gave the AI (and why)
 
 | Rule | Why |
 |---|---|
-| Ask questions before building; the person picks. | Choices like storage, model, scoring order are product decisions, not code decisions. |
+| Ask us questions before building; we pick. | Choices like storage, model, scoring order are product decisions, not code decisions. |
 | Announce any deviation from the agreed plan *before* building it. | Early on, the AI reported deviations afterwards; we found that too late to steer. |
-| End every update with a short plain-language summary. | The AI's updates were long and full of internal names; the person lost track of the product. |
+| End every update with a short plain-language summary. | The AI's updates were long and full of internal names; we lost track of the product. |
 | Test live, not just on paper; report failures honestly. | Several bugs only showed up in live runs (below). |
 | Never write a secret value anywhere. | The repo is public. |
 
@@ -22,7 +22,7 @@ One person (the team) made every product decision. Coding agents did the buildin
 |---|---|---|
 | Which area? | Several were possible. | **On the road** (breakdowns, missed ships, delays): the most varied, most human-judgement-heavy area. |
 | Who computes prices and times? | Early drafts let the language model write them. | **Code computes every number; the AI only explains.** A model once wrote a wrong check-in date and once invented a EUR 450 tow cost with no data behind it. |
-| What is the "best" ferry? | Cheapest or fastest. | **On time first, then price, then convenience** (the person's own wording). |
+| What is the "best" ferry? | Cheapest or fastest. | **On time first, then price, then convenience** (our own wording, not the AI's). |
 | Things with no reliable price (tow, repair)? | AI priced them itself. | **They become a task for a Bahn employee, never a made-up number.** |
 | Several problems on one order? | Each problem agent files its own plan. | **One coordinator merges everything into ONE plan per order**, so a person never has to compare two half-plans. |
 | Driver hurt or in danger? | AI judges seriousness. | **The AI does not judge.** The driver gets "call 112" at once, a top-priority employee task opens, and no rebooking happens until a person decides. |
