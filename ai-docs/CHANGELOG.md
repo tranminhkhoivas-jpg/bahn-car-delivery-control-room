@@ -1,6 +1,7 @@
 # Changelog
 <!-- Newest at TOP. One line per change. Not read by default; read only to trace history. -->
 <!-- Format: YYYY-MM-DD | model (harness) | F-### or BRIEF | added/edited/replaced/removed | what changed; if replaced, what the old way was and why it was dropped -->
+2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Judge page gained "Tools we used and why" (n8n, Data Tables, Haiku via OpenRouter, GLiDE v1.2, Langfuse, Promptfoo, Telegram, Next.js/PGlite)
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | edited | Judge page voice made consistent: "we" = the team, "the AI" = coding agents
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | added | BAHN/HOW-WE-WORKED-WITH-AI.md judge page and root README "What we built and why" section; pushed
 2026-10-25 | claude-opus-5-5 via Claude Code | F-004 | added | BAHN/TEST-RUN-PROMPT.md: prompt for the full pre-demo test run; F-004 no longer says no public repo exists

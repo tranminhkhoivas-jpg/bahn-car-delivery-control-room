@@ -6,6 +6,19 @@ A plain-language account for judges. The detailed engineering log (with workflow
 
 On this page "we" means the team (one person); "the AI" means the coding agents. We made every product decision; the AI did the building: Claude Opus 5.5 in Claude Code built the agent workflows and the control room; GPT 6.1 in Codex did the early reading of Bahn's brief and the tool research; the Antigravity (AGY) CLI prepared the GitHub repository. A shared "master doc" in `ai-docs/` acted as the team's memory, so any AI chat could pick up where another left off. Every AI change had to update it the same turn, and a check blocked the AI from finishing until it did.
 
+## Tools we used and why
+
+| Tool | What it does here | Why this one |
+|---|---|---|
+| **n8n** (self-hosted, local) | Runs the agent: a router plus one workflow per problem type (journey, vehicle, incident, documents, expenses...), and the tools they call. | Each step is visible and inspectable on a canvas, so a person can see what the agent did. The AI built the workflows through the **n8n-MCP** connector and a setup script that installs everything on an empty n8n. |
+| **n8n Data Tables** | Stores cases, plans, plan steps, messages and settings. | Built into n8n; no Docker or database server needed, so a fresh clone runs on a laptop. |
+| **Claude Haiku 5.5 via OpenRouter** | The agents' reasoning and wording; also plays the simulated driver and buyer in the demo. | Fast and cheap enough for many small agent turns; OpenRouter was the event's credit provider. |
+| **GLiDE v1.2 (Fastino)** | A small, very fast yes/no judge used at every gate: which problem type an event is, whether a buyer's or employee's answer is clear, whether a simulated reply contradicts the data, whether a closed case should reopen, whether a case can close. | Our own idea, not the AI's. A big model is slow and costly for "is this answer clear?". GLiDE answers in a fraction of a second with a confidence score, and each threshold is a setting Bahn can change. In a test it scored invented driver replies 0.97+ as contradictions and an honest reply 0.01. |
+| **Langfuse** | Holds the agents' instructions as versioned prompts. A new version is saved as "candidate"; only a person promotes it to "production". | Changing what the agent is told is a change to the product, so it gets the same "a person says yes" rule as bookings. |
+| **Promptfoo** | Replays past cases against a candidate prompt and the current one and reports which passes more. | Evidence before a person promotes a prompt, instead of trusting a reworded instruction. |
+| **Telegram** (bots) | How the agent talks to drivers, buyers and staff in the demo. A second "simulated people" bot posts the simulated replies so viewers see the whole conversation. | Free, instant, works on any phone, with buttons for "which order?" and buyer choices. |
+| **Next.js control room** (Bahn's starter, PGlite) | The staff screen: the queue of cases that need a person, plans with costs, approve/reject, steps, settings. | Bahn's own starter kept their look and data model; PGlite (Postgres in-process) removed the need for Docker. |
+
 ## Rules we gave the AI (and why)
 
 | Rule | Why |
