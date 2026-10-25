@@ -1,0 +1,215 @@
+{
+  "name": "BAHN tool · log_stage",
+  "id": "OtrLogStageWf01",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "ls-start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "workflow",
+              "type": "string"
+            },
+            {
+              "name": "stage",
+              "type": "string"
+            },
+            {
+              "name": "result",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ls-check",
+      "name": "Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// One row per finished stage; the stage must be one of the workflow's own (lib/plan.js STAGES).\n// @include plan.js\nconst i = $json, wf = String(i.workflow || '').trim(), stage = String(i.stage || '').trim(), result = String(i.result || '').trim();\nconst ref = String(i.order_ref || '').trim().toUpperCase();\nif (!STAGES[wf]) return [{ json: { ok: false, error: `unknown workflow '${wf}'` } }];\nif (!STAGES[wf][stage]) return [{ json: { ok: false, error: `stage must be one of: ${Object.keys(STAGES[wf]).join(', ')}` } }];\nif (!/^CD-\\d{6}$/.test(ref) || !result) return [{ json: { ok: false, error: 'order_ref and a short result are required' } }];\nreturn [{ json: { ok: true, row: { order_ref: ref, actor: 'agent', kind: 'stage', text: `${stage}: ${result.slice(0, 400)}`, source_ref: `stage:${wf}:${stage}` } } }];"
+      }
+    },
+    {
+      "id": "ls-ok",
+      "name": "OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ls-row",
+      "name": "Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $json.row }];"
+      }
+    },
+    {
+      "id": "ls-log",
+      "name": "Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "ls-done",
+      "name": "Return done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { logged: true, stage: $('Check').first().json.row.source_ref } }];"
+      }
+    },
+    {
+      "id": "ls-err",
+      "name": "Return error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { logged: false, error: $json.error } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check": {
+      "main": [
+        [
+          {
+            "node": "OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK?": {
+      "main": [
+        [
+          {
+            "node": "Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row": {
+      "main": [
+        [
+          {
+            "node": "Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log": {
+      "main": [
+        [
+          {
+            "node": "Return done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

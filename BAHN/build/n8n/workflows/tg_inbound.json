@@ -1,0 +1,1569 @@
+{
+  "id": "OtrTgInboundWf01",
+  "name": "BAHN tool · tg_inbound",
+  "nodes": [
+    {
+      "id": "hook",
+      "name": "Inbound webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "c4d2a1b0-7e6f-4a3b-9c8d-1e2f3a4b5c6d",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bahn/tg-in",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "sent",
+      "name": "Sent message",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "tg_message_id",
+              "condition": "eq",
+              "keyValue": "={{ String($json.body.reply_to_tg_id || 'none') }}"
+            },
+            {
+              "keyName": "direction",
+              "condition": "eq",
+              "keyValue": "out"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "set",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "decide",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Link the message to an order: button data, else the Bahn message it replies to. Then decide what it means.\nconst b = ($('Media text').isExecuted ? $('Media text').first().json : $('Inbound webhook').first().json).body || {}, L = $('Link').first().json;\n// Linked without a reply (only open order, or a \"which order\" tap): the latest Bahn message to that person on that order stands in.\nconst outs = $('Latest out').all().map((r) => r.json).filter((r) => r && r.id).sort((x, y) => y.id - x.id);\nconst sent = L.linked ? { ...(outs[0] || {}), order_ref: L.order_ref, role: L.role } : $('Sent message').first().json;\nconst S = Object.fromEntries($('Settings').all().map((r) => [r.json.key, r.json.value]));\nconst text = L.linked === 'chosen' ? L.text : String(b.text || '').trim();\nconst [, pid = '', key = ''] = String(b.data || '').startsWith('a:') ? String(b.data).split(':') : []; // 'o:' taps only pick the order\nconst base = { linked: L.linked, from_id: String(b.from_id || ''), text, from: b.from_name || 'unknown', sim: !!b.sim, reply_to: String(b.reply_to_tg_id || ''), threshold: Number(S.glide_buyer_reply) || 0.6 };\n// ponytail: unlinked messages go to staff; matching a known Telegram user to their only open order needs real contacts.\nif (!sent?.order_ref) return [{ json: { ...base, action: L.choices?.length ? 'which' : 'unknown', order_ref: '', choices: L.choices || [] } }];\nconst role = sent.role, order_ref = sent.order_ref, proposal_id = pid || sent.proposal_id || '';\nlet buttons = []; try { buttons = JSON.parse(sent.buttons || '[]'); } catch {}\nconst d = { ...base, role, order_ref, proposal_id, buttons, asked: sent.text };\nif (role === 'driver') return [{ json: { ...d, action: 'router' } }];\n  if (role === 'staff') return [{ json: { ...d, action: 'log' } }];\n  // Reopen check: after a closed case, GLiDE decides whether a buyer or delivery-contact message raises something new.\n  if (L.closed && !key && ['buyer', 'delivery_contact'].includes(role)) return [{ json: { ...d, reopen: true, action: 'glide', glide_body: { model: 'fastino/GLiDE', store: false, state: { message: text, case: 'closed' },\n    questions: { new_issue: { type: 'noul', instructions: 'Bahn Express closed this car delivery case. Does the message raise a new problem, request or question that needs action (not just thanks, ok or a greeting)?', criteria: { true: 'Needs action', false: 'Nothing new to do' } } } } } }];\nif (role === 'buyer' && proposal_id && buttons.length) {\n  if (key) return [{ json: { ...d, action: 'act', decision: key === 'decline' ? 'buyer_decline' : 'buyer_accept', option: key === 'decline' ? '' : key } }];\n  const letter = (text.match(/\\boption\\s*([A-C])\\b/i) || text.match(/^\\s*([A-C])\\s*[.!]?\\s*$/i) || [])[1];\n  if (letter && buttons.some((x) => x.key === letter.toUpperCase())) return [{ json: { ...d, action: 'act', decision: 'buyer_accept', option: letter.toUpperCase() } }];\n}\nconst q = role === 'buyer'\n  ? { accept: { type: 'noul', instructions: 'Bahn Express offered the buyer of a car delivery a changed plan (see asked). Does the reply clearly ACCEPT the offer?', criteria: { true: 'Clearly accepts or agrees', false: 'Does not clearly accept (declines, hesitates, asks a question, unrelated)' } },\n      decline: { type: 'noul', instructions: 'Does the reply clearly DECLINE or refuse the offer?', criteria: { true: 'Clearly declines or refuses', false: 'Does not clearly decline' } } }\n  : { accept: { type: 'noul', instructions: 'Bahn Express asked the person at the delivery address to confirm a delivery change (see asked). Does the reply clearly CONFIRM it?', criteria: { true: 'Clearly confirms or agrees', false: 'Does not clearly confirm' } } };\nreturn [{ json: { ...d, action: 'glide', glide_body: { model: 'fastino/GLiDE', store: false, state: { asked: sent.text, reply: text }, questions: q } } }];"
+      }
+    },
+    {
+      "id": "needg",
+      "name": "Need GLiDE?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.action === 'glide' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "glide",
+      "name": "GLiDE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "judge",
+      "name": "Judge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// GLiDE scores (threshold glide_buyer_reply). Not clear, or GLiDE down: a person reads it (employee task with a drafted question).\nconst d = $('Decide').first().json, a = $json.answers || {};\nconst acc = Number(a.accept?.noul), dec = Number(a.decline?.noul), t = d.threshold;\nconst offers = (d.buttons || []).filter((b) => b.key !== 'decline');\nif (d.reopen) { const s = Number(a.new_issue?.noul); return [{ json: { ...d, action: !(s < t) ? 'router' : 'log', note: !(s < t) ? 'new issue after the case was closed: case reopened' : 'case closed, nothing new', score: Number.isFinite(s) ? s : null } }]; } // GLiDE down: the agent looks\nif (d.role === 'buyer' && d.proposal_id && dec >= t && !(acc >= t)) return [{ json: { ...d, action: 'act', decision: 'buyer_decline', option: '', score: dec } }];\nif (d.role === 'buyer' && d.proposal_id && acc >= t && offers.length <= 1) return [{ json: { ...d, action: 'act', decision: 'buyer_accept', option: offers[0]?.key || '', score: acc } }];\nif (d.role === 'delivery_contact' && acc >= t) return [{ json: { ...d, action: 'log', note: 'delivery contact confirmed', score: acc } }];\nreturn [{ json: { ...d, action: 'task', score: Number.isFinite(acc) ? acc : null } }];"
+      }
+    },
+    {
+      "id": "route",
+      "name": "Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $('Judge').isExecuted ? $('Judge').first().json : $('Decide').first().json }];"
+      }
+    },
+    {
+      "id": "mrow",
+      "name": "Message row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const d = $json;\nreturn [{ json: { order_ref: d.order_ref, direction: 'in', person_key: `${d.role || 'unknown'}:${d.order_ref}`, role: d.role || 'unknown', chat_id: d.from_id || '', // inbound: the sender's Telegram user id, used to link their later messages tg_message_id: '', reply_to_tg_id: d.reply_to,\n  proposal_id: String(d.proposal_id || ''), kind: d.action, text: d.text, buttons: '', status: d.sim ? 'simulated' : 'received' } }];"
+      }
+    },
+    {
+      "id": "logm",
+      "name": "Log message",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "trow",
+      "name": "Timeline row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Route').first().json;\nconst what = { act: `${d.decision === 'buyer_decline' ? 'declines' : 'accepts'}${d.option ? ' option ' + d.option : ''}`, router: 'new driver message, sent to the agent', task: 'not clear, an employee reads it', log: d.note || 'logged', unknown: 'not linked to an order', which: 'the sender has several open orders; the bot asks which' }[d.action];\nreturn [{ json: { order_ref: d.order_ref || '-', actor: d.from, kind: 'telegram_in', text: `${d.role || 'unknown'} on Telegram: \"${d.text}\" (${what}${d.linked && d.linked !== 'chosen' ? ', linked: ' + d.linked : ''}${d.score != null ? ', GLiDE ' + d.score : ''})`, source_ref: 'tg_inbound' } }];"
+      }
+    },
+    {
+      "id": "logt",
+      "name": "Log timeline",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "isact",
+      "name": "Buyer decided?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Route').first().json.action === 'act' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "act",
+      "name": "Record buyer answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:5678/webhook/bahn/act",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ proposal_id: $('Route').first().json.proposal_id, decision: $('Route').first().json.decision, option: $('Route').first().json.option, operator: 'buyer via Telegram', note: $('Route').first().json.text }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "isdrv",
+      "name": "Driver message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Route').first().json.action === 'router' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "router",
+      "name": "Wake agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:5678/webhook/bahn/on-the-road",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const r = $('Route').first().json, who = { driver: 'Driver', buyer: 'Buyer', delivery_contact: 'Delivery contact' }[r.role] || 'Someone'; return JSON.stringify({ order_ref: r.order_ref, source: r.role === 'driver' ? 'driver' : 'telegram', event: `${who} wrote on Telegram${r.reopen ? ' after the case was closed' : ''}: ${r.text}` }); })() }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "isunc",
+      "name": "Unclear?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Route').first().json.action === 'task' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "dprompt",
+      "name": "Draft prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Route').first().json;\nreturn [{ json: { prompt: `Bahn Express wrote to the ${d.role} of car delivery ${d.order_ref}:\\n\"\"\"${d.asked}\"\"\"\\nThey answered: \"${d.text}\"\\nThe answer is not clear enough to act on. Write ONE short, polite follow-up message to them that asks exactly what is missing${(d.buttons || []).length ? ' (which option: ' + d.buttons.map((b) => b.key + ' = ' + b.label).join('; ') + ')' : ''}. Answer with the message only.` } }];"
+      }
+    },
+    {
+      "id": "dq",
+      "name": "Draft question",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        3960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "dq-lm",
+      "name": "Draft model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        0,
+        220
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 2048
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      }
+    },
+    {
+      "id": "task",
+      "name": "Employee task",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4400,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrEscalateWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Route').first().json.order_ref }}",
+            "priority": "normal",
+            "workflow": "general",
+            "reason": "={{ 'Unclear ' + $('Route').first().json.role + ' reply on Telegram: \"' + $('Route').first().json.text + '\"' }}",
+            "task": "={{ 'Read the reply and decide. Suggested follow-up (approve before sending): ' + String($json.text || '').trim() }}",
+            "info": "={{ 'Plan #' + ($('Route').first().json.proposal_id || '-') + '. Earlier message: ' + $('Route').first().json.asked }}",
+            "last_known_location": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "info",
+              "displayName": "info",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "last_known_location",
+              "displayName": "last_known_location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "isunk",
+      "name": "Unlinked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4620,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Route').first().json.action === 'unknown' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "askstaff",
+      "name": "Ask staff",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4840,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "-",
+            "role": "staff",
+            "text": "={{ 'Message from ' + $('Route').first().json.from + ' is not linked to any order: \"' + $('Route').first().json.text + '\". Which order is it about?' }}",
+            "proposal_id": "",
+            "kind": "which_order",
+            "buttons": "[]",
+            "reply_to": "",
+            "from_sim": "false"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "media",
+      "name": "Media?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        110,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !!$json.body?.media?.file_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "getfile",
+      "name": "Get file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        330,
+        -300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile?file_id={{ $json.body.media.file_id }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "download",
+      "name": "Download",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        550,
+        -300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "mediaprompt",
+      "name": "Media prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        770,
+        -300
+      ],
+      "parameters": {
+        "jsCode": "    // One model call per file. Images: Claude Haiku 5.5 describes them. Voice, audio, video and files: Gemini 3.5 Flash\n    // transcribes in the speaker's language and translates to English (OpenRouter takes audio and video as base64).\n    const m = $('Inbound webhook').first().json.body.media;\n    let b64 = '';\n    try { b64 = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('base64'); } catch { return [{ json: { request: null } }]; } // download failed (too big, expired)\n    const mime = String(m.mime || $input.first().binary?.data?.mimeType || 'application/octet-stream').split(';')[0];\n    const image = m.kind === 'photo' || mime.startsWith('image/');\n    const ask = 'This file was sent to Bahn Express, a company that delivers cars by driving them, by a driver, buyer or delivery contact. '\n      + (image ? 'Describe only what matters for the delivery: warning lights and their text, damage, the place (signs, road), documents and what they say. Facts only, no advice.'\n        : 'Transcribe what is said or written, name its language, translate it to English, and describe anything shown that matters for the delivery. Facts only.')\n      + ' Answer with JSON only: {\"language\": \"...\", \"transcript\": \"...\", \"english\": \"...\", \"description\": \"...\"}';\n    const FMT = { 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac', 'audio/flac': 'flac', 'audio/webm': 'webm' };\n    const part = image ? { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }\n      : mime.startsWith('audio/') ? { type: 'input_audio', input_audio: { data: b64, format: FMT[mime] || 'ogg' } }\n      : mime.startsWith('video/') ? { type: 'video_url', video_url: { url: `data:${mime};base64,${b64}` } }\n      : { type: 'file', file: { filename: m.name || 'file', file_data: `data:${mime};base64,${b64}` } };\n    return [{ json: { request: { model: image ? 'anthropic/claude-haiku-5.5' : 'google/gemini-3.5-flash', temperature: 0, messages: [{ role: 'user', content: [{ type: 'text', text: ask }, part] }] } } }];"
+      }
+    },
+    {
+      "id": "describe",
+      "name": "Describe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        990,
+        -300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi"
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "mediatext",
+      "name": "Media text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1210,
+        -300
+      ],
+      "parameters": {
+        "jsCode": "    // The model's reading goes into the message text the agents and GLiDE see; the file id stays so the control room can show it.\n    const b = $('Inbound webhook').first().json.body, m = b.media, r = $json;\n    let o = {}; try { o = JSON.parse(String(r.choices?.[0]?.message?.content || '').replace(/^[^{]*/, '').replace(/[^}]*$/, '')); } catch {}\n    const KIND = { photo: 'photo', voice: 'voice message', audio: 'audio', video: 'video', video_note: 'video message', document: 'file' }[m.kind] || 'file';\n    const heard = o.transcript ? `${o.language || 'unknown language'}: \"${o.transcript}\"${o.english && o.english !== o.transcript ? ` (English: \"${o.english}\")` : ''}` : '';\n    const said = heard || o.description ? `[${KIND}${heard ? ', ' + heard : ''}${o.description ? (heard ? '; shows: ' : ': ') + o.description : ''}]` : `[${KIND}: could not be read automatically; open it in the control room]`;\n    return [{ json: { body: { ...b, text: [String(b.text || '').trim(), said, `[media ${m.kind} ${m.file_id}]`].filter(Boolean).join('\\n') } } }];"
+      }
+    },
+    {
+      "id": "senderhistory",
+      "name": "Sender history",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        330,
+        220
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_id",
+              "condition": "eq",
+              "keyValue": "={{ String(($('Media text').isExecuted ? $('Media text').first().json : $('Inbound webhook').first().json).body.from_id || 'none') }}"
+            },
+            {
+              "keyName": "direction",
+              "condition": "eq",
+              "keyValue": "in"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "cases",
+      "name": "Cases",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        550,
+        220
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bDV4O3vt5BIv0eH8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "link",
+      "name": "Link",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        770,
+        220
+      ],
+      "parameters": {
+        "jsCode": "    // Which order a message is about. A reply or a button says it. Otherwise: the sender's only open order (from their earlier\n    // replies), several open orders -> the bot asks \"which order\" with buttons, none -> staff. A closed case is flagged for the reopen check.\n    const b = ($('Media text').isExecuted ? $('Media text').first().json : $('Inbound webhook').first().json).body, sent = $('Sent message').first().json || {};\n    const latest = {}; for (const c of $('Cases').all().map((r) => r.json).filter((r) => r && r.order_ref)) if (!latest[c.order_ref] || c.id > latest[c.order_ref].id) latest[c.order_ref] = c;\n    const isOpen = (ref) => latest[ref]?.status !== 'closed_by_agent';\n    const [k, ref = '', role = ''] = String(b.data || '').split(':');\n    if (k === 'o') return [{ json: { linked: 'chosen', order_ref: ref, role, text: String(sent.text || ''), closed: !isOpen(ref) } }]; // tap on \"which order\": the original text was stored with the question\n    if (sent.order_ref) return [{ json: { linked: '', order_ref: sent.order_ref, role: sent.role, closed: !isOpen(sent.order_ref) } }];\n    const mine = {}; for (const m of $('Sender history').all().map((r) => r.json).filter((r) => r && r.order_ref && ['buyer', 'driver', 'delivery_contact'].includes(r.role))) mine[m.order_ref] = m.role;\n    const open = Object.entries(mine).filter(([o]) => isOpen(o));\n    if (open.length === 1) return [{ json: { linked: 'only open order', order_ref: open[0][0], role: open[0][1], closed: false } }];\n    return [{ json: { linked: '', order_ref: '', role: '', choices: open.map(([o, r]) => ({ order_ref: o, role: r })), closed: false } }];"
+      }
+    },
+    {
+      "id": "latestout",
+      "name": "Latest out",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        990,
+        220
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $json.order_ref || 'none' }}"
+            },
+            {
+              "keyName": "role",
+              "condition": "eq",
+              "keyValue": "={{ $json.role || 'none' }}"
+            },
+            {
+              "keyName": "direction",
+              "condition": "eq",
+              "keyValue": "out"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "whichorder",
+      "name": "Which order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4840,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Route').first().json.action === 'which' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "askwhich",
+      "name": "Ask which",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5060,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const r = $('Route').first().json; return JSON.stringify({ chat_id: $env.TELEGRAM_DEMO_CHAT_ID, text: 'Which order is your message about?', reply_markup: { inline_keyboard: r.choices.map((c) => [{ text: `${c.order_ref} (${c.role.replace('_', ' ')})`, callback_data: `o:${c.order_ref}:${c.role}`.slice(0, 64) }]) } }); })() }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "whichrow",
+      "name": "Which row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        220
+      ],
+      "parameters": {
+        "jsCode": "    const r = $('Route').first().json, s = $json;\n    return [{ json: { order_ref: '', direction: 'out', person_key: `tg:${r.from_id}`, role: 'unknown', chat_id: '', tg_message_id: String(s.result?.message_id || ''), reply_to_tg_id: '', proposal_id: '', kind: 'which_order', text: r.text, buttons: JSON.stringify(r.choices), status: s.ok ? 'sent' : 'failed' } }];"
+      }
+    },
+    {
+      "id": "logwhich",
+      "name": "Log which",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5500,
+        220
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "tap",
+      "name": "Tap?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !!($('Media text').isExecuted ? $('Media text').first().json : $('Inbound webhook').first().json).body.data }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "removetapbuttons",
+      "name": "Remove tap buttons",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/editMessageReplyMarkup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_DEMO_CHAT_ID, message_id: Number(($('Media text').isExecuted ? $('Media text').first().json : $('Inbound webhook').first().json).body.reply_to_tg_id), reply_markup: { inline_keyboard: [] } }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "answertap",
+      "name": "Answer tap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/answerCallbackQuery",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ callback_query_id: ($('Media text').isExecuted ? $('Media text').first().json : $('Inbound webhook').first().json).body.callback_id || 'none', text: 'Got it' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Inbound webhook": {
+      "main": [
+        [
+          {
+            "node": "Media?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sent message": {
+      "main": [
+        [
+          {
+            "node": "Sender history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Need GLiDE?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need GLiDE?": {
+      "main": [
+        [
+          {
+            "node": "GLiDE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GLiDE": {
+      "main": [
+        [
+          {
+            "node": "Judge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Judge": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Message row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tap?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message row": {
+      "main": [
+        [
+          {
+            "node": "Log message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log message": {
+      "main": [
+        [
+          {
+            "node": "Timeline row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timeline row": {
+      "main": [
+        [
+          {
+            "node": "Log timeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log timeline": {
+      "main": [
+        [
+          {
+            "node": "Buyer decided?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buyer decided?": {
+      "main": [
+        [
+          {
+            "node": "Record buyer answer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Driver message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Driver message?": {
+      "main": [
+        [
+          {
+            "node": "Wake agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unclear?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unclear?": {
+      "main": [
+        [
+          {
+            "node": "Draft prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unlinked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft prompt": {
+      "main": [
+        [
+          {
+            "node": "Draft question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft question": {
+      "main": [
+        [
+          {
+            "node": "Employee task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unlinked?": {
+      "main": [
+        [
+          {
+            "node": "Ask staff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Which order?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft question",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Media?": {
+      "main": [
+        [
+          {
+            "node": "Get file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sent message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get file": {
+      "main": [
+        [
+          {
+            "node": "Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download": {
+      "main": [
+        [
+          {
+            "node": "Media prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Media prompt": {
+      "main": [
+        [
+          {
+            "node": "Describe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe": {
+      "main": [
+        [
+          {
+            "node": "Media text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Media text": {
+      "main": [
+        [
+          {
+            "node": "Sent message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sender history": {
+      "main": [
+        [
+          {
+            "node": "Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cases": {
+      "main": [
+        [
+          {
+            "node": "Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link": {
+      "main": [
+        [
+          {
+            "node": "Latest out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Latest out": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which order?": {
+      "main": [
+        [
+          {
+            "node": "Ask which",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask which": {
+      "main": [
+        [
+          {
+            "node": "Which row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which row": {
+      "main": [
+        [
+          {
+            "node": "Log which",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tap?": {
+      "main": [
+        [
+          {
+            "node": "Remove tap buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove tap buttons": {
+      "main": [
+        [
+          {
+            "node": "Answer tap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

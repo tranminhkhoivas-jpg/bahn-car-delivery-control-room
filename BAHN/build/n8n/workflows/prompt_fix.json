@@ -1,0 +1,369 @@
+{
+  "name": "BAHN prompts · fix from a flagged mistake",
+  "id": "OtrPromptFixWf01",
+  "nodes": [
+    {
+      "id": "pf-hook",
+      "name": "Fix webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "bahn-prompt-fix",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bahn/prompt-fix",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "pf-check",
+      "name": "Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// A person flagged a mistake in an agent run. Only the 8 problem agents have editable prompts.\nconst AGENTS = ['vehicle', 'journey', 'destination', 'tracking', 'incident', 'documents', 'expenses', 'general'];\nconst b = $json.body || {};\nconst order_ref = String(b.order_ref || '').trim().toUpperCase(), agent = String(b.agent || ''), complaint = String(b.complaint || '').trim();\nif (!/^CD-\\d+$/.test(order_ref)) throw new Error('order_ref like CD-420322 is required');\nif (!AGENTS.includes(agent)) throw new Error('agent must be one of ' + AGENTS.join(', '));\nif (complaint.length < 10) throw new Error('say what the agent got wrong (at least a short sentence)');\nreturn [{ json: { order_ref, agent, complaint: complaint.slice(0, 1500), operator: String(b.operator || 'ops').slice(0, 60) } }];"
+      }
+    },
+    {
+      "id": "pf-current",
+      "name": "Current prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "LangfuseBasic001",
+          "name": "BAHN Langfuse"
+        }
+      },
+      "parameters": {
+        "url": "={{ '{{LANGFUSE_HOST}}/api/public/v2/prompts/bahn-agent-' + $json.agent }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "label",
+              "value": "production"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "pf-lines",
+      "name": "Run lines",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Check').first().json.order_ref }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "pf-prompt",
+      "name": "Fix prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// What the fixer sees: the complaint, what the agent did on this order (latest timeline lines) and its whole current prompt.\nconst f = $('Check').first().json, cur = $('Current prompt').first().json;\nconst lines = $('Run lines').all().map((x) => x.json).filter((r) => r.id).sort((a, b) => b.id - a.id).slice(0, 30).reverse()\n  .map((r) => `[${r.actor} / ${r.kind}] ${String(r.text || '').slice(0, 600)}`).join('\\n');\nconst prompt = `You maintain the instructions (system prompt) of an AI operations agent at Bahn Express, a car delivery company.\nThe agent is the \"${f.agent}\" workflow. A person in the control room flagged a mistake it made.\n\nTHE PERSON'S COMPLAINT:\n${f.complaint}\n\nWHAT HAPPENED ON ORDER ${f.order_ref} (case timeline, oldest first):\n${lines || '(no timeline lines)'}\n\nTHE AGENT'S CURRENT PROMPT (between the markers):\n<<<PROMPT\n${cur.prompt}\nPROMPT>>>\n\nWrite the corrected prompt. Rules:\n- Change as little as possible: add or reword the one or two rules that stop this mistake. Keep every other line exactly as it is.\n- Keep the final \"YOUR STAGES\" line unchanged.\n- A general rule, not a rule about this one order (no order numbers, names or prices from this case).\n- Never remove a safety rule: a person approves bookings, costs, date changes and customer messages.\n\nReply with the full corrected prompt between <<<PROMPT and PROMPT>>>, then one line starting \"WHY:\" saying what you changed.`;\nreturn [{ json: { prompt } }];"
+      }
+    },
+    {
+      "id": "pf-fixer",
+      "name": "Fixer",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1100,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      }
+    },
+    {
+      "id": "pf-fixer-lm",
+      "name": "Fixer model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        220
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      },
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 8000
+        }
+      }
+    },
+    {
+      "id": "pf-cand",
+      "name": "Candidate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Accept the draft only if it is a whole prompt (not a fragment) that still has the stages line; else fail loudly.\nconst cur = $('Current prompt').first().json, f = $('Check').first().json;\nconst text = String($json.text || '');\nconst m = text.match(/<<<PROMPT\\s*([\\s\\S]*?)\\s*PROMPT>>>/);\nconst why = (text.match(/WHY:\\s*(.+)/) || [, 'no reason given'])[1].trim().slice(0, 400);\nif (!m) throw new Error('the fixer did not return a prompt between the markers');\nconst prompt = m[1].trim();\nif (!prompt.includes('YOUR STAGES')) throw new Error('the fixed prompt lost its YOUR STAGES line');\nif (prompt.length < cur.prompt.length * 0.8) throw new Error('the fixed prompt is much shorter than the current one; refused');\nif (prompt === cur.prompt.trim()) throw new Error('the fixer changed nothing');\nreturn [{ json: { why, base_version: cur.version, body: { name: cur.name, type: 'text', prompt, labels: ['candidate'], config: cur.config || {},\n  commitMessage: `Fix from ${f.operator} on ${f.order_ref}: ${f.complaint}`.slice(0, 500) } } }];"
+      }
+    },
+    {
+      "id": "pf-save",
+      "name": "Save candidate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "LangfuseBasic001",
+          "name": "BAHN Langfuse"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "{{LANGFUSE_HOST}}/api/public/v2/prompts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "pf-row",
+      "name": "Fix row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const f = $('Check').first().json, c = $('Candidate').first().json;\nreturn [{ json: { order_ref: f.order_ref, agent: f.agent, complaint: f.complaint, base_version: String(c.base_version), version: String($json.version),\n  why: c.why, status: 'testing', test_summary: '', decided_by: f.operator } }];"
+      }
+    },
+    {
+      "id": "pf-log",
+      "name": "Log fix",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PromptFixTable01"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "pf-done",
+      "name": "Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, id: $json.id, agent: $json.agent, version: Number($json.version), why: $json.why } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Fix webhook": {
+      "main": [
+        [
+          {
+            "node": "Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check": {
+      "main": [
+        [
+          {
+            "node": "Current prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current prompt": {
+      "main": [
+        [
+          {
+            "node": "Run lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run lines": {
+      "main": [
+        [
+          {
+            "node": "Fix prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix prompt": {
+      "main": [
+        [
+          {
+            "node": "Fixer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fixer": {
+      "main": [
+        [
+          {
+            "node": "Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidate": {
+      "main": [
+        [
+          {
+            "node": "Save candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save candidate": {
+      "main": [
+        [
+          {
+            "node": "Fix row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix row": {
+      "main": [
+        [
+          {
+            "node": "Log fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log fix": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fixer model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Fixer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

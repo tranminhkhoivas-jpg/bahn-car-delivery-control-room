@@ -1,0 +1,331 @@
+{
+  "id": "f2VgRULg3vc4zeNy",
+  "name": "BAHN sim · simulated driver",
+  "nodes": [
+    {
+      "id": "s1",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "s2",
+      "name": "Get context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "s3",
+      "name": "Driver prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Persona = the assigned driver. Synthetic demo stand-in for a real driver chat.\n// The facts block is the only ground truth; \"Check reply\" below rejects replies that contradict it.\nconst c = $json;\nconst s = c.snapshot || {};\nconst driver = (s.assignments || []).find(a => a.status === 'IN_PROGRESS') || (s.assignments || [])[0] || {};\nconst t = (s.tracking_latest || []).slice(-1)[0] || {};\nconst facts = {\n  now: s.snapshot_now,\n  order: { ref: c.order_ref, status: s.order?.status },\n  car: (s.vehicles || []).map(v => `${v.make} ${v.model}`).join(', '),\n  route: { from: s.pickup?.city || s.pickup?.name, to: s.delivery?.city || s.delivery?.site },\n  latest_tracking: t.observed_at ? { observed_at: t.observed_at, km_remaining: t.distance_remaining_km, progress: t.progress_fraction, eta: t.estimated_delivery_at, location_quality: t.location_quality } : 'none',\n  delivery_windows: (s.time_windows || []).map(w => ({ purpose: w.purpose, start: w.start_at, end: w.end_at })),\n  incidents: (s.incidents || []).map(i => ({ kind: i.kind, status: i.status, opened_at: i.opened_at, resolved_at: i.resolved_at })),\n  alerts: (s.alerts || []).map(a => a.summary),\n  expenses_so_far: (s.expenses || []).map(e => ({ kind: e.kind, amount_cents: e.amount_cents, currency: e.currency, status: e.status })),\n  travel_bookings: (s.travel_reservations || []).map(r => ({ route: r.route_label, departs: r.departure_at, cutoff: r.check_in_cutoff_at, state: r.snapshot_journey_state })),\n};\nconst chat = [\n  ...(s.messages || []).filter(m => m.channel === 'driver_chat').map(m => `${m.author_type}: ${m.body}`),\n  ...(c.case_timeline || []).filter(t => t.kind === 'driver_message').map(t => `${t.actor}: ${t.text}`),\n];\nconst ask = $('Start').first().json.text;\nconst prompt = `You are ${driver.driver || 'the driver'}, a freelance car delivery driver for Bahn Express, driving order ${c.order_ref}.\nFACTS (ground truth, never contradict, never change a number):\n${JSON.stringify(facts, null, 1)}\nYour earlier chat (stay consistent with what you already said):\n${chat.join('\\n') || '(none)'}\n\nOperations just wrote to you:\n\"${ask}\"\n\nRules:\n- Times, distances, ETA, booking times and incident details come only from FACTS. Do not give other numbers.\n- Location: say where you are only relative to FACTS, e.g. \"on the way to ${facts.route.to}, about ${t.distance_remaining_km ?? 'some'} km left\". You may mention a generic stop (rest area, petrol station) but never name a road, town or place that is not in FACTS.\n- If FACTS do not cover what is asked, say you will check, or answer vaguely. Never invent a new problem, cost or delay.\n- For a photo, say you sent it. You are not a mechanic and never diagnose.\nReply as the driver in 1-3 short sentences, plain chat style. Output only the reply text.`;\n// Test switch from the control room (\"driver does not answer\"): logged as a test_flag line, expires after 20 min.\nconst flag = (c.case_timeline || []).filter((x) => x.kind === 'test_flag').slice(-1)[0];\nconst silent = !!flag && flag.text === 'driver_unreachable' && Date.now() - Date.parse(flag.at) < 20 * 60e3;\nreturn [{ json: { prompt, facts, silent } }];\n"
+      }
+    },
+    {
+      "id": "s4",
+      "name": "Driver reply",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "s5",
+      "name": "Driver model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.6,
+          "maxTokens": 1500
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      }
+    },
+    {
+      "id": "s6",
+      "name": "Return",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ponytail: placeholder cut-off from the Settings page. Unclear or failed check falls back to a reply built only from facts.\nconst CUT = $('Get context').first().json.settings?.glide_fact_check ?? 0.5;\nconst { reply } = $('Check reply').first().json;\nconst a = $json.answers?.contradicts;\nconst p = a ? Number(a.noul) : null;\nif (p !== null && p < CUT && reply) return [{ json: { reply, grounding: `checked (p_contradiction=${p.toFixed(2)})` } }];\nconst f = $('Driver prompt').first().json.facts;\nconst lt = f.latest_tracking;\nconst where = lt && lt !== 'none' && lt.km_remaining != null ? `On the way to ${f.route.to}, about ${lt.km_remaining} km left.` : `On the way to ${f.route.to}.`;\nreturn [{ json: { reply: `${where} Let me check that and get back to you.`,\n  grounding: !reply ? \"fallback: model returned empty text\" : p === null ? `fallback: check unavailable (${$json.error?.message || 'no answer'})` : `fallback: generated reply contradicted facts (p=${p.toFixed(2)}): ${reply}` } }];\n"
+      }
+    },
+    {
+      "id": "d7",
+      "name": "Check reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Ask GLiDE whether the generated reply contradicts the facts the driver was given.\nconst facts = $('Driver prompt').first().json.facts;\nconst reply = String($json.text || '').trim();\nconst glide_body = {\n  model: 'fastino/GLiDE', store: false,\n  state: { facts, driver_reply: reply },\n  questions: { contradicts: {\n    type: 'noul',\n    instructions: 'Does driver_reply state anything that conflicts with facts: a different time, ETA, distance, booking, incident or problem; a payment, cost, repair, recovery or other event that is not in facts; or a named road/town/place that is not in facts?',\n    criteria: { true: 'The reply conflicts with facts, or claims a place, payment or event not in facts', false: 'The reply is consistent with facts (generic stops and vague answers are fine)' },\n  } },\n};\nreturn [{ json: { reply, glide_body } }];\n"
+      }
+    },
+    {
+      "id": "d8",
+      "name": "Contradiction check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "name": "Answers?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.silent !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "913c7b16-9e87-0c2d-6db3-feba80a1cc08",
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "name": "No answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{ json: { reply: '', grounding: 'simulated: driver did not answer (test switch driver_unreachable)' } }];"
+      },
+      "id": "4805f73b-e49e-0c47-d262-a14747578254",
+      "position": [
+        900,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get context": {
+      "main": [
+        [
+          {
+            "node": "Driver prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Driver prompt": {
+      "main": [
+        [
+          {
+            "node": "Answers?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Driver reply": {
+      "main": [
+        [
+          {
+            "node": "Check reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check reply": {
+      "main": [
+        [
+          {
+            "node": "Contradiction check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contradiction check": {
+      "main": [
+        [
+          {
+            "node": "Return",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answers?": {
+      "main": [
+        [
+          {
+            "node": "Driver reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Driver model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Driver reply",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

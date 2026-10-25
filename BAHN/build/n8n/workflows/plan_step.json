@@ -1,0 +1,1030 @@
+{
+  "id": "PlanStepActWf001",
+  "name": "BAHN act · plan step",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "q1",
+      "name": "Step webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b7f3c2a1-5d4e-4f6a-9b8c-1e2d3f4a5b6c",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bahn/step",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "q2",
+      "name": "Get step",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ Number($json.body.step_id) }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "q3",
+      "name": "Check step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Close the loop on one plan step. Only open steps (waiting_for_person or failed) can change.\nconst req = $('Step webhook').first().json.body || {};\nconst st = $('Get step').first().json;\nconst outcome = String(req.outcome || '').toLowerCase();\nconst operator = String(req.operator || '').trim();\nconst fail = (error) => [{ json: { ok: false, error } }];\nif (!st || !st.id) return fail(`No step #${req.step_id}`);\nif (!['done', 'failed', 'retry'].includes(outcome)) return fail(\"outcome must be 'done', 'failed' or 'retry'\");\nif (!operator) return fail('operator name is required');\nif (!['waiting_for_person', 'failed'].includes(st.status)) return fail(`Step #${st.id} is ${st.status}; nothing to do.`);\nconst note = String(req.note || '').trim();\nif (outcome === 'done' && st.kind === 'buyer_decision' && !note) return fail(\"Write the buyer's answer in the note (accepted, or the time they want instead).\");\nlet update = { status: outcome, note: note || `marked ${outcome} by ${operator}`, updated_by: operator };\nif (outcome === 'retry') {\n  if (st.kind !== 'book_hotel' || st.status !== 'failed') return fail('retry works only for a failed hotel booking; a failed ferry needs a new plan from the agent');\n  // ponytail: mock provider again; simulate 'hotel_timeout' (test only) keeps failing.\n  const ok = req.simulate !== 'hotel_timeout';\n  let h = 2166136261; for (const ch of st.detail + st.attempts) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);\n  update = { status: ok ? 'done' : 'failed', ref: ok ? `MOCK-HOTEL-${(h >>> 0) % 1000000}` : '', attempts: String(Number(st.attempts || 0) + 1),\n    note: ok ? `retry by ${operator}: confirmed (mock)` : `retry by ${operator}: provider timeout`, updated_by: operator };\n}\n    // An asked time (task tagged [ask_time ready|handover]): the answer is a date-time from the control room, or not known yet.\n    // A ready time after a repair gets the safety margin repair_slack_min before anything is planned from it.\n    const ask = (String(st.note || '').match(/\\[ask_time (ready|handover)\\]/) || [])[1];\n    if (outcome === 'done' && ask) {\n      const S = Object.fromEntries($('Settings').all().map((r) => [r.json.key, r.json.value]));\n      const at = Date.parse(req.time || ''), iso = (x) => new Date(x).toISOString().slice(0, 16) + 'Z';\n      if (req.time && Number.isNaN(at)) return fail('time must be a date and time');\n      const LABEL = { ready: 'Car ready at', handover: 'Driver can start driving at' };\n      const slack = ask === 'ready' ? Number(S.repair_slack_min ?? 60) : 0;\n      const said = !req.time ? `${LABEL[ask]}: not known yet` : `${LABEL[ask]}: ${iso(at)}${slack ? ` (plan from ${iso(at + slack * 6e4)}: ${slack} min safety margin, setting repair_slack_min)` : ''}`;\n      update.note = `${said}. ${note}`.trim() + ` [ask_time ${ask} ${req.time ? 'at ' + iso(at) : 'unknown'}]`;\n    }\nreturn [{ json: { ok: true, id: st.id, order_ref: st.order_ref, proposal_id: st.proposal_id, kind: st.kind, update } }];"
+      }
+    },
+    {
+      "id": "q4",
+      "name": "OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Check step').first().json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "q5",
+      "name": "Update fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $('Check step').first().json.update }];"
+      }
+    },
+    {
+      "id": "q6",
+      "name": "Update step",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Check step').first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "q7",
+      "name": "Plan steps",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "proposal_id",
+              "condition": "eq",
+              "keyValue": "={{ String($('Check step').first().json.proposal_id) }}"
+            },
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Check step').first().json.order_ref }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "q8",
+      "name": "Case row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Check step').first().json;\nconst rows = $('Plan steps').all().map(i => i.json).filter(r => r.id);\nconst open = rows.filter(r => ['waiting_for_person', 'failed'].includes(r.status));\nconst summary = open.length ? `Plan #${d.proposal_id}: open ${open.map(r => `#${r.id} ${r.kind} (${r.status})`).join(', ')}.` : `Plan #${d.proposal_id}: all steps handled. Agent continues.`;\n// A done check before booking: the plan itself still waits for a person to approve it.\nif (!open.length && d.update.status === 'done' && $('Get step').first().json.ref === 'before_booking') return [{ json: { order_ref: d.order_ref, status: 'needs_decision', owner: 'operator', summary: `Plan #${d.proposal_id}: check before booking done. The plan can now be approved.` } }];\nreturn [{ json: { order_ref: d.order_ref, status: open.length ? (open.some(r => r.status === 'failed') ? 'needs_decision' : 'waiting_on_person') : 'in_progress', owner: open.length ? 'operator' : 'agent', summary } }];"
+      }
+    },
+    {
+      "id": "q9",
+      "name": "Upsert case",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bDV4O3vt5BIv0eH8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $json.order_ref }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "q10",
+      "name": "Timeline row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Check step').first().json;\nreturn [{ json: { order_ref: d.order_ref, actor: `operator ${d.update.updated_by}`, kind: 'plan_step', text: `Step #${d.id} ${d.kind}: ${d.update.status}. ${d.update.note}`, source_ref: `proposal:${d.proposal_id}` } }];"
+      }
+    },
+    {
+      "id": "q11",
+      "name": "Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "q12",
+      "name": "Return done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Check step').first().json;\nreturn [{ json: { ok: true, step_id: d.id, kind: d.kind, ...d.update, case: $('Case row').first().json, agent_woken: $('Wake agent').isExecuted } }];"
+      }
+    },
+    {
+      "id": "q13",
+      "name": "Return error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, error: $('Check step').first().json.error } }];"
+      }
+    },
+    {
+      "name": "Wake?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ (() => { const d = $('Check step').first().json; const open = $('Plan steps').all().map((i) => i.json).filter((r) => r.id && ['waiting_for_person', 'failed'].includes(r.status)); return d.update.status === 'failed' || (d.kind === 'buyer_decision' && d.update.status === 'done') || (open.length === 0 && !(d.update.status === 'done' && $('Get step').first().json.ref === 'before_booking')); })() }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "executeOnce": true,
+      "position": [
+        2400,
+        300
+      ],
+      "id": "dcaa1877-d71d-6db4-b064-0147aecfeba0"
+    },
+    {
+      "name": "Wake agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OqZ8ylefc5OZxgo0"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Check step').first().json.order_ref }}",
+            "event": "={{ (() => { const d = $('Check step').first().json; return 'Step #' + d.id + ' (' + d.kind + ') of ' + (['task', 'escalation'].includes(d.proposal_id) ? 'an employee task' : 'plan #' + d.proposal_id) + ' was marked ' + d.update.status + ' by ' + d.update.updated_by + '. Note: ' + d.update.note + '. Check what is left and do the next stage.'; })() }}",
+            "source": "follow_up",
+            "workflows": "={{ (($('Get step').first().json.note || '').match(/\\[workflow (\\w+)\\]/) || [])[1] || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflows",
+              "displayName": "workflows",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "executeOnce": true,
+      "position": [
+        2600,
+        200
+      ],
+      "id": "b81e38bc-bdd2-8183-936f-051fc6bb57e6"
+    },
+    {
+      "id": "ps-cn",
+      "name": "Check note",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3300,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrCheckNoteWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "note": "={{ $('Step webhook').first().json.body.note || '' }}",
+            "purpose": "answer to an employee task",
+            "context": "={{ $('Get step').first().json.detail || '' }}",
+            "skip": "={{ ((!($('Check step').first().json.ok && String($('Step webhook').first().json.body.outcome).toLowerCase() === 'done' && ['task', 'escalation'].includes(String($('Get step').first().json.proposal_id))) || String($('Step webhook').first().json.body.confirm_unclear) === 'true') ? 'true' : 'false') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "note",
+              "displayName": "note",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "purpose",
+              "displayName": "purpose",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "context",
+              "displayName": "context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "skip",
+              "displayName": "skip",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "ps-nc",
+      "name": "Note clear?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ps-unclear",
+      "name": "Return unclear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The note is too vague for the agent: nothing changed; the employee edits it or confirms it as is.\nreturn [{ json: { ok: false, unclear: true, score: $json.score, question: $json.question, error: `The note is unclear. ${$json.question} Edit the note, or send it again with confirm_unclear to keep it.` } }];"
+      }
+    },
+    {
+      "id": "pstep",
+      "name": "Plan of step",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3960,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Check step').first().json.proposal_id || '0' }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "dmsg",
+      "name": "Draft message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The employee approved this draft (marked it done): send it. A buyer reminder on an open offer carries the option buttons again.\n// @include offer.js\nconst c = $('Check step').first().json, st = $('Get step').first().json, p = $json || {};\nlet pl = {}; try { pl = JSON.parse(JSON.parse(p.payload || '{}').detail || '{}'); } catch {}\nconst role = st.kind === 'customer_message' ? 'buyer' : 'delivery_contact';\nreturn [{ json: { order_ref: c.order_ref, role, text: st.detail, proposal_id: String(c.proposal_id || ''), kind: st.kind,\n  buttons: JSON.stringify(role === 'buyer' && p.status === 'offered' ? offerButtons(pl) : []), reply_to: '', from_sim: 'false' } }];"
+      }
+    },
+    {
+      "id": "sdq",
+      "name": "Send draft?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4400,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Check step').first().json.update.status === 'done' && ['customer_message','delivery_contact_message'].includes($('Check step').first().json.kind) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "tgs",
+      "name": "Send on Telegram",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4620,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "once",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "role": "={{ $json.role }}",
+            "text": "={{ $json.text }}",
+            "proposal_id": "={{ $json.proposal_id }}",
+            "kind": "={{ $json.kind }}",
+            "buttons": "={{ $json.buttons }}",
+            "reply_to": "={{ $json.reply_to }}",
+            "from_sim": "={{ $json.from_sim }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "cont",
+      "name": "Continue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: {} }];"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "ps-set",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        330,
+        200
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    }
+  ],
+  "connections": {
+    "Step webhook": {
+      "main": [
+        [
+          {
+            "node": "Get step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get step": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check step": {
+      "main": [
+        [
+          {
+            "node": "Check note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK?": {
+      "main": [
+        [
+          {
+            "node": "Update fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update fields": {
+      "main": [
+        [
+          {
+            "node": "Update step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update step": {
+      "main": [
+        [
+          {
+            "node": "Plan steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan steps": {
+      "main": [
+        [
+          {
+            "node": "Case row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case row": {
+      "main": [
+        [
+          {
+            "node": "Upsert case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert case": {
+      "main": [
+        [
+          {
+            "node": "Timeline row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timeline row": {
+      "main": [
+        [
+          {
+            "node": "Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log": {
+      "main": [
+        [
+          {
+            "node": "Send draft?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wake?": {
+      "main": [
+        [
+          {
+            "node": "Wake agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wake agent": {
+      "main": [
+        [
+          {
+            "node": "Return done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check note": {
+      "main": [
+        [
+          {
+            "node": "Note clear?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note clear?": {
+      "main": [
+        [
+          {
+            "node": "OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return unclear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send draft?": {
+      "main": [
+        [
+          {
+            "node": "Plan of step",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan of step": {
+      "main": [
+        [
+          {
+            "node": "Draft message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft message": {
+      "main": [
+        [
+          {
+            "node": "Send on Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send on Telegram": {
+      "main": [
+        [
+          {
+            "node": "Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue": {
+      "main": [
+        [
+          {
+            "node": "Wake?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Check step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

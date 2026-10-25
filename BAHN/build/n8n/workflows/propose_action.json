@@ -1,0 +1,680 @@
+{
+  "id": "8sK4USmDJewo5G45",
+  "name": "BAHN tool · propose_action",
+  "nodes": [
+    {
+      "id": "p1",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "action",
+              "type": "string"
+            },
+            {
+              "name": "summary",
+              "type": "string"
+            },
+            {
+              "name": "payload",
+              "type": "string"
+            },
+            {
+              "name": "rationale",
+              "type": "string"
+            },
+            {
+              "name": "evidence_refs",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "name": "Get context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "name": "Build proposal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// A proposal is a request for a person to decide. Nothing changes until the Act workflow approves it.\nconst ACTIONS = ['customer_message', 'change_delivery_promise', 'book_recovery', 'book_travel', 'approve_cost', 'change_booking', 'reassign_driver', 'plan', 'other'];\nconst i = $('Start').first().json;\nconst c = $json;\nconst action = String(i.action || '').trim();\nconst problems = [];\nif (!c.found) problems.push(c.error || 'order not found');\nif (!ACTIONS.includes(action)) problems.push(`action must be one of ${ACTIONS.join(', ')}`);\nif (!String(i.evidence_refs || '').trim()) problems.push('evidence_refs is required: cite the ids (alerts, incidents, messages, timeline) this proposal relies on');\nif (action === 'plan' && !(() => { try { return Array.isArray(JSON.parse(i.payload).steps); } catch (e) { return false; } })()) problems.push('plan is created only by propose_plan');\nif (problems.length) return [{ json: { ok: false, error: 'NOT CREATED: ' + problems.join('; ') } }];\nconst s = c.snapshot;\n// A newer plan replaces the pending one (marked 'replaced' after insert): the newest plan always holds every event.\nconst basis = { order_status: s.order.status, last_event_id: (s.recent_events.at(-1) || {}).id || null, timeline_len: c.case_timeline.length, checked_at: new Date().toISOString() };\nreturn [{ json: { ok: true, order_ref: c.order_ref, action, payload: JSON.stringify({ summary: i.summary || '', detail: i.payload || '' }), rationale: i.rationale || '', evidence_refs: String(i.evidence_refs), status: 'pending', basis: JSON.stringify(basis), decided_by: '', decision_note: '', result: '' } }];"
+      }
+    },
+    {
+      "id": "p4",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "p5",
+      "name": "Row only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const { ok, ...row } = $json; return [{ json: row }];"
+      }
+    },
+    {
+      "id": "p6",
+      "name": "Insert proposal",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "p7",
+      "name": "Case row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const p = $json; const s = JSON.parse(p.payload).summary;\nreturn [{ json: { order_ref: p.order_ref, status: 'needs_decision', owner: 'operator', summary: `Proposal #${p.id} (${p.action}) waiting for approval: ${s}` } }];"
+      }
+    },
+    {
+      "id": "p8",
+      "name": "Upsert case",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bDV4O3vt5BIv0eH8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $json.order_ref }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "p9",
+      "name": "Timeline row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Insert proposal').first().json;\nreturn [{ json: { order_ref: p.order_ref, actor: 'agent', kind: 'proposal', text: `Proposed #${p.id} ${p.action}: ${JSON.parse(p.payload).summary} | Why: ${p.rationale}`, source_ref: `proposal:${p.id}` } }];"
+      }
+    },
+    {
+      "id": "p10",
+      "name": "Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "p11",
+      "name": "Return created",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Insert proposal').first().json;\nconst replaced = $('Mark replaced').all().concat($('Mark offered replaced').all()).map((x) => x.json.id).filter(Boolean);\nreturn [{ json: { created: true, proposal_id: p.id, status: 'pending', replaced, note: 'Waiting for a person to approve or reject. Nothing has changed yet. Do not tell anyone it is done.' } }];"
+      }
+    },
+    {
+      "id": "p12",
+      "name": "Return error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        120
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { created: false, error: $json.error } }];"
+      }
+    },
+    {
+      "id": "pa-reprow",
+      "name": "Replace row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Insert proposal').first().json;\nreturn [{ json: { status: 'replaced', decision_note: `replaced by newer plan #${p.id}` } }];"
+      }
+    },
+    {
+      "id": "pa-markrep",
+      "name": "Mark replaced",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Insert proposal').first().json.order_ref }}"
+            },
+            {
+              "keyName": "action",
+              "condition": "eq",
+              "keyValue": "={{ $('Insert proposal').first().json.action === 'plan' ? 'plan' : '-none-' }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "pending"
+            },
+            {
+              "keyName": "id",
+              "condition": "neq",
+              "keyValue": "={{ $('Insert proposal').first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "pa-mor",
+      "name": "Mark offered replaced",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Insert proposal').first().json.order_ref }}"
+            },
+            {
+              "keyName": "action",
+              "condition": "eq",
+              "keyValue": "={{ $('Insert proposal').first().json.action === 'plan' ? 'plan' : '-none-' }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "offered"
+            },
+            {
+              "keyName": "id",
+              "condition": "neq",
+              "keyValue": "={{ $('Insert proposal').first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "pa-on",
+      "name": "Offer note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The buyer holds an offer that is now replaced: a short \"updated offer follows\" draft waits for the employee.\nconst p = $('Insert proposal').first().json;\nconst old = $('Mark offered replaced').all().map((x) => x.json.id).filter(Boolean);\n// A plan's before_booking checks are open at once: the plan cannot be approved until a person marks them done.\nlet plan = {}; try { plan = JSON.parse(JSON.parse(p.payload || '{}').detail || '{}'); } catch {}\nconst checks = (plan.steps || []).filter((s) => s.before_booking).map((s) => ({ json: { order_ref: p.order_ref, proposal_id: String(p.id), step_no: '0', kind: 'staff_task', detail: s.detail, status: 'waiting_for_person', ref: 'before_booking', attempts: '0', note: `Check before booking: plan #${p.id} cannot be approved until this is done.`, updated_by: 'propose_action' } }));\nif (!old.length) return checks.length ? checks : [{ json: { skip: true } }];\nreturn [...checks, { json: { order_ref: p.order_ref, proposal_id: String(p.id), step_no: '0', kind: 'customer_message', detail: 'Our earlier offer is no longer valid; an updated offer follows shortly.', status: 'waiting_for_person', ref: '', attempts: '0', note: `Draft: approve to send. Offer #${old.join(', #')} was replaced by plan #${p.id}.`, updated_by: 'propose_action' } }];"
+      }
+    },
+    {
+      "id": "pa-or",
+      "name": "Offer replaced?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.skip !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "pa-ins",
+      "name": "Insert offer note",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "pa-rro",
+      "name": "Replace row (offered)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Same fields again: 'Mark replaced' outputs the rows it changed, not the fields to write.\nreturn [{ json: $('Replace row').first().json }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get context": {
+      "main": [
+        [
+          {
+            "node": "Build proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build proposal": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Row only",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row only": {
+      "main": [
+        [
+          {
+            "node": "Insert proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert proposal": {
+      "main": [
+        [
+          {
+            "node": "Case row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case row": {
+      "main": [
+        [
+          {
+            "node": "Upsert case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert case": {
+      "main": [
+        [
+          {
+            "node": "Timeline row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timeline row": {
+      "main": [
+        [
+          {
+            "node": "Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log": {
+      "main": [
+        [
+          {
+            "node": "Replace row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace row": {
+      "main": [
+        [
+          {
+            "node": "Mark replaced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark replaced": {
+      "main": [
+        [
+          {
+            "node": "Replace row (offered)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark offered replaced": {
+      "main": [
+        [
+          {
+            "node": "Offer note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer note": {
+      "main": [
+        [
+          {
+            "node": "Offer replaced?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer replaced?": {
+      "main": [
+        [
+          {
+            "node": "Insert offer note",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert offer note": {
+      "main": [
+        [
+          {
+            "node": "Return created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace row (offered)": {
+      "main": [
+        [
+          {
+            "node": "Mark offered replaced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

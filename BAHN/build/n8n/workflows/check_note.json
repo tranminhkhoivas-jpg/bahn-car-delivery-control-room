@@ -1,0 +1,382 @@
+{
+  "name": "BAHN tool · check_note",
+  "id": "OtrCheckNoteWf01",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "cn-start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "note",
+              "type": "string"
+            },
+            {
+              "name": "purpose",
+              "type": "string"
+            },
+            {
+              "name": "context",
+              "type": "string"
+            },
+            {
+              "name": "skip",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cn-set",
+      "name": "Setting",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "glide_note_clarity"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "cn-prep",
+      "name": "Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Employee notes (rejection reasons, task answers) steer the agent. A vague note gets one clarifying question back.\nconst i = $('Start').first().json;\nconst note = String(i.note || '').trim();\nif (String(i.skip) === 'true' || !note) return [{ json: { check: false } }];\nconst threshold = Number($json.value) || 0.6; // Settings page: glide_note_clarity (placeholder)\nreturn [{ json: { check: true, threshold, glide_body: { model: 'fastino/GLiDE', store: false, state: { note, purpose: i.purpose, context: i.context },\n  questions: { clear: { type: 'noul', instructions: `A Bahn Express employee wrote this note as a ${i.purpose} for an AI planner that re-plans a car delivery. Using only the note and its context: is the note clear and specific enough to act on without guessing?`,\n    criteria: { true: 'Clear: it says what is wrong or what to do, specific enough to act on', false: 'Vague or ambiguous: it does not say what should change (for example \"no\", \"bad\", \"fix it\", \"not good\")' } } } } } }];"
+      }
+    },
+    {
+      "id": "cn-need",
+      "name": "Need check?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.check === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cn-glide",
+      "name": "GLiDE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "cn-judge",
+      "name": "Judge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const pr = $('Prep').first().json, i = $('Start').first().json;\nconst a = $json.answers?.clear;\n// GLiDE down: the note passes unchecked rather than blocking the employee.\nif (!a) return [{ json: { ok: true, unclear: false, warning: `GLiDE unavailable (${$json.error?.message || 'no answer'}); note accepted unchecked.` } }];\nconst score = Number(a.noul);\nif (score >= pr.threshold) return [{ json: { ok: true, unclear: false, score } }];\nreturn [{ json: { ok: false, unclear: true, score, prompt: `A Bahn Express employee wrote this note as a ${i.purpose}.\\nContext: ${i.context || 'none'}\\nNote: \"${String(i.note).trim()}\"\\nIt is too vague for the AI planner to act on. Write ONE short, friendly question back to the employee asking for the missing detail (what should change, or what exactly they decided). Answer with the question only.` } }];"
+      }
+    },
+    {
+      "id": "cn-unclear",
+      "name": "Unclear?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.unclear === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cn-q",
+      "name": "Question",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1540,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "name": "Question model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4096
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      },
+      "position": [
+        1760,
+        220
+      ],
+      "id": "cn-lm"
+    },
+    {
+      "id": "cn-result",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const j = $('Judge').first().json;\nreturn [{ json: { ok: false, unclear: true, score: j.score, question: String($json.text || '').trim() || 'What exactly should change?' } }];"
+      }
+    },
+    {
+      "id": "cn-clear",
+      "name": "Clear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $('Judge').isExecuted ? $('Judge').first().json : { ok: true, unclear: false, skipped: true } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Setting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setting": {
+      "main": [
+        [
+          {
+            "node": "Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep": {
+      "main": [
+        [
+          {
+            "node": "Need check?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need check?": {
+      "main": [
+        [
+          {
+            "node": "GLiDE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GLiDE": {
+      "main": [
+        [
+          {
+            "node": "Judge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Judge": {
+      "main": [
+        [
+          {
+            "node": "Unclear?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unclear?": {
+      "main": [
+        [
+          {
+            "node": "Question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Question": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Question model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Question",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

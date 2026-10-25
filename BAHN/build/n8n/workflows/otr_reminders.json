@@ -1,0 +1,1266 @@
+{
+  "id": "OtrRemindersWf01",
+  "name": "BAHN tool · otr_reminders",
+  "nodes": [
+    {
+      "id": "tick",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "waits",
+      "name": "Waits",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WaitsTable000001"
+        },
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      },
+      "notes": "All waits, closed ones too: an escalated or done wait stops the same item being reopened. ponytail: table only grows; prune closed rows if it gets big."
+    },
+    {
+      "id": "props",
+      "name": "Proposals",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "steps",
+      "name": "Steps",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "waiting_for_person"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "msgs",
+      "name": "Messages",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "decide",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Follow-ups on the demo clock. One pass decides everything; the nodes after it only carry the actions out.\n// @include settings.js\n// @include plan.js\nconst S = readSettings($('Settings').all().map((r) => r.json));\nconst real = Date.now(), speed = Number(S.demo_clock_speed) || 1;\nconst now = simNow('2026-10-21T09:00:00Z', S, real); // ponytail: dataset snapshot time, same for every order\nconst t = (x) => Date.parse(x || '') || 0;\nconst simMin = (fromIso) => (real - t(fromIso)) * speed / 6e4;\nconst rows = (n) => $(n).all().map((r) => r.json).filter((r) => r && r.id);\nconst waits = rows('Waits'), props = Object.fromEntries(rows('Proposals').map((p) => [String(p.id), p])), steps = rows('Steps'), msgs = rows('Messages');\nconst inbound = msgs.filter((m) => m.direction === 'in');\nconst out = [], A = (type, x) => out.push({ json: { type, ...x } });\nconst count = Number(S.reminder_count) || 2;\nconst WAIT = { driver: S.reminder_wait_driver_min, buyer: S.reminder_wait_buyer_min, delivery_contact: S.reminder_wait_buyer_min, employee: S.reminder_wait_employee_min };\nconst planOf = (p) => { try { return JSON.parse(JSON.parse(p.payload || '{}').detail || '{}'); } catch { return {}; } };\nconst unbutton = (pid) => msgs.filter((m) => m.proposal_id === String(pid) && m.direction === 'out' && m.buttons && m.buttons !== '[]' && m.tg_message_id).forEach((m) => A('unbutton', { message_id: m.tg_message_id }));\nconst dropDrafts = (pid) => steps.filter((s) => s.proposal_id === String(pid) && /^R/.test(s.step_no) && s.status === 'waiting_for_person').forEach((s) => A('step_update', { id: s.id, fields: { status: 'skipped', note: 'Offer ended before this reminder was sent' } }));\nconst close = (w, state) => A('wait_update', { id: w.id, fields: { state, reminders: w.reminders || '0', last_reminded: w.last_reminded || '' } });\nconst staff = (order_ref, text) => A('tg', { order_ref, role: 'staff', text, proposal_id: '', kind: 'staff_ping', buttons: '[]', reply_to: '', from_sim: 'false' });\nconst ROLE = { buyer: 'buyer', delivery_contact: 'delivery contact', driver: 'driver' };\n\nfor (const w of waits.filter((x) => x.state === 'open' && x.who !== 'employee')) { // employee waits: own loop below\n  const p = props[w.ref], since = w.since || w.createdAt, last = w.last_reminded || since, n = Number(w.reminders) || 0;\n  const replied = inbound.some((m) => m.person_key === w.person_key && t(m.createdAt) > t(since));\n  if (w.who === 'buyer' && w.ref) {\n    if (!p || p.status !== 'offered') { close(w, `closed: plan ${p ? p.status : 'missing'}`); unbutton(w.ref); dropDrafts(w.ref); continue; }\n    const pl = planOf(p);\n    if (pl.valid_until && now > t(pl.valid_until)) {\n      close(w, 'expired'); unbutton(w.ref); dropDrafts(w.ref);\n      A('proposal_update', { id: p.id, fields: { status: 'expired', result: `Offer expired at ${pl.valid_until_local || pl.valid_until} without a buyer answer. Decisions after that time are no longer valid; a revised plan follows.` } });\n      const workflows = [...String(p.rationale || '').matchAll(/(?:^| \\| )(\\w+): /g)].map((m) => m[1]).filter((k) => k in STAGES).join(',');\n      A('wake', { order_ref: p.order_ref, source: 'follow_up', workflows, event: `Offer #${p.id} expired at ${pl.valid_until_local || pl.valid_until} before the buyer answered. Make a revised plan with fresh options; it goes to the buyer again.` });\n      staff(p.order_ref, `Offer #${p.id} expired at ${pl.valid_until_local || pl.valid_until} without a buyer answer. Buttons removed; the agent makes a revised plan.`);\n      continue;\n    }\n    if (replied) continue; // their answer is with the agent or an employee task\n  } else if (replied) { close(w, 'answered'); continue; }\n  if (simMin(last) < (Number(WAIT[w.who]) || 30)) continue;\n  const stamp = { id: w.id, fields: { state: 'open', reminders: String(n + 1), last_reminded: new Date(real).toISOString() } };\n  if (n < count) {\n    A('wait_update', stamp);\n    if (w.who === 'driver') A('tg', { order_ref: w.order_ref, role: 'driver', text: /^arrival:/.test(w.ref) ? `Reminder ${n + 1}: have you reached the car? Reply here when you have it and can start driving.` : `Reminder ${n + 1}: we still need your answer to our last message. Please reply here.`, proposal_id: '', kind: 'driver_reminder', buttons: '[]', reply_to: '', from_sim: 'false' });\n    else A('step', { row: { order_ref: w.order_ref, proposal_id: w.ref || 'reminder', step_no: `R${n + 1}`, kind: w.who === 'buyer' ? 'customer_message' : 'delivery_contact_message',\n      detail: w.who === 'buyer' ? `Reminder: we are still waiting for your choice on our offer${planOf(p).valid_until_local ? ', valid until ' + planOf(p).valid_until_local : ''}. Please tap an option or reply with its letter.` : 'Reminder: could you please confirm the delivery change we sent earlier?',\n      status: 'waiting_for_person', ref: '', attempts: '0', note: `Reminder ${n + 1} of ${count} to the ${ROLE[w.who]}: approve (mark done) to send it on Telegram.`, updated_by: 'reminders' } });\n  } else {\n    close(w, 'escalated');\n    A('task', { order_ref: w.order_ref, priority: w.who === 'driver' ? 'urgent' : 'normal', workflow: w.who === 'driver' ? 'tracking' : 'general', last_known_location: '',\n      reason: `The ${ROLE[w.who]} did not answer after ${count} reminders (${w.about}).`, task: w.who === 'driver' ? 'Call the driver and find out where the car is.' : `Contact the ${ROLE[w.who]} another way and record their answer.`, info: `Waiting since ${since}.` });\n  }\n}\n\n    // Asked times (tasks tagged [ask_time ready|handover]), newest per order. Not known yet: no rebooking; every\n    // handover_checkin_min staff are asked again (one open task at a time) and the agent re-checks tracking and sailings.\n    // Known handover time: the driver confirms arrival on Telegram (driver wait due at that time; reminders, then escalation).\n    const asks = {};\n    for (const s of steps.filter((x) => x.kind === 'staff_task' && /\\[ask_time (ready|handover)/.test(x.note || ''))) if (!asks[s.order_ref] || s.id > asks[s.order_ref].id) asks[s.order_ref] = s;\n    const driverSaid = (ref, since) => inbound.some((m) => m.person_key === `driver:${ref}` && t(m.createdAt) > t(since));\n    for (const s of Object.values(asks)) {\n      const [, kind, how = '', at = ''] = s.note.match(/\\[ask_time (ready|handover)(?: (unknown|at) ?(\\S*?))?\\]/) || [];\n      const wfs = (s.note.match(/\\[workflow (\\w+)\\]/) || [])[1] || '';\n      const ci = waits.find((x) => x.ref === `checkin:${s.order_ref}` && x.state === 'open');\n      if (s.status === 'done' && how === 'unknown' && !ci) A('wait_insert', { row: { order_ref: s.order_ref, who: 'employee', person_key: 'employee', about: `${kind} time not known yet (check-in)`, ref: `checkin:${s.order_ref}`, workflow: wfs, since: new Date(real).toISOString(), reminders: '0', state: 'open', valid_until: '', last_reminded: '' } });\n      if (ci && (how === 'at' || driverSaid(s.order_ref, ci.since))) { close(ci, how === 'at' ? 'answered' : 'answered: driver wrote'); continue; }\n      if (ci && s.status === 'done' && simMin(ci.last_reminded || ci.since) >= (Number(S.handover_checkin_min) || 30)) {\n        A('wait_update', { id: ci.id, fields: { state: 'open', reminders: String((Number(ci.reminders) || 0) + 1), last_reminded: new Date(real).toISOString() } });\n        A('task', { order_ref: s.order_ref, priority: 'normal', workflow: wfs, last_known_location: '', ask_time: kind,\n          reason: `Check-in: nobody knows yet when ${kind === 'ready' ? 'the car is ready' : 'the driver can start driving'}.`, task: `Give the time ${kind === 'ready' ? 'the car will be ready' : 'the driver or replacement can start driving'}, or leave it not known.`, info: 'Nothing is rebooked until a time is known or arrival is confirmed.' });\n        A('wake', { order_ref: s.order_ref, source: 'follow_up', workflows: wfs, event: `Check-in: the ${kind === 'ready' ? 'repair ready time' : 'handover time'} is still not known. Call check_journey: if tracking shows the car moving again, treat it as arrived and plan from now. Otherwise do not rebook; call plan_rebooking only to see whether the last workable sailing is close to selling out, and if so create_employee_task (normal) warning staff. Never ask the buyer.` });\n      }\n      if (kind === 'handover' && how === 'at' && s.status === 'done' && !waits.some((x) => x.ref === `arrival:${s.id}`)) {\n        const due = new Date(real + (t(at) - now) / speed).toISOString(); // demo clock -> real time\n        A('wait_insert', { row: { order_ref: s.order_ref, who: 'driver', person_key: `driver:${s.order_ref}`, about: 'handover arrival: the driver confirms on Telegram', ref: `arrival:${s.id}`, workflow: wfs, since: due, reminders: '0', state: 'open', valid_until: '', last_reminded: '' } });\n      }\n    }\n\n    // Employee: plans waiting for approval and open tasks get pings, then an escalation.\nconst open = [...Object.values(props).filter((p) => p.status === 'pending').map((p) => ({ ref: `proposal:${p.id}`, order_ref: p.order_ref, what: `Plan #${p.id} waits for approval` })),\n  ...steps.filter((s) => s.status === 'waiting_for_person' && s.kind !== 'buyer_decision').map((s) => ({ ref: `step:${s.id}`, order_ref: s.order_ref, what: `Step #${s.id} (${s.kind}) waits for a person: ${String(s.detail).slice(0, 120)}` }))];\nconst emp = waits.filter((w) => w.who === 'employee' && !/^checkin:/.test(w.ref)); // check-ins: own loop above\nfor (const o of open) if (!emp.some((w) => w.ref === o.ref)) A('wait_insert', { row: { order_ref: o.order_ref, who: 'employee', person_key: 'employee', about: o.what, ref: o.ref, workflow: '', since: new Date(real).toISOString(), reminders: '0', state: 'open', valid_until: '', last_reminded: '' } });\nfor (const w of emp.filter((x) => x.state === 'open')) {\n  const o = open.find((x) => x.ref === w.ref);\n  if (!o) { close(w, 'done'); continue; }\n  const n = Number(w.reminders) || 0;\n  if (simMin(w.last_reminded || w.since || w.createdAt) < (Number(WAIT.employee) || 15)) continue;\n  if (n < count) { A('wait_update', { id: w.id, fields: { state: 'open', reminders: String(n + 1), last_reminded: new Date(real).toISOString() } }); staff(o.order_ref, `Reminder ${n + 1}: ${o.what}. Open the control room.`); }\n  else { close(w, 'escalated'); staff(o.order_ref, `ESCALATED to ${S.escalation_role}: ${o.what}, untouched after ${count} reminders.`); }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "q1",
+      "name": "Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'tg' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "send",
+      "name": "Send",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1760,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "role": "={{ $json.role }}",
+            "text": "={{ $json.text }}",
+            "proposal_id": "={{ $json.proposal_id }}",
+            "kind": "={{ $json.kind }}",
+            "buttons": "={{ $json.buttons }}",
+            "reply_to": "={{ $json.reply_to }}",
+            "from_sim": "={{ $json.from_sim }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "q2",
+      "name": "Wait update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'wait_update' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "uw",
+      "name": "Update wait",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WaitsTable000001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "state": "={{ $json.fields.state }}",
+            "reminders": "={{ $json.fields.reminders }}",
+            "last_reminded": "={{ $json.fields.last_reminded }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reminders",
+              "displayName": "reminders",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_reminded",
+              "displayName": "last_reminded",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "q3",
+      "name": "New wait?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'wait_insert' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wr",
+      "name": "Wait rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((i) => ({ json: i.json.row }));"
+      }
+    },
+    {
+      "id": "iw",
+      "name": "Insert wait",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WaitsTable000001"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "q4",
+      "name": "Draft step?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'step' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "sr",
+      "name": "Step rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((i) => ({ json: i.json.row }));"
+      }
+    },
+    {
+      "id": "is",
+      "name": "Insert step",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "q5",
+      "name": "Expire plan?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'proposal_update' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "up",
+      "name": "Update plan",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.fields.status }}",
+            "result": "={{ $json.fields.result }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "result",
+              "displayName": "result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "q6",
+      "name": "Wake?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'wake' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wake",
+      "name": "Wake agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:5678/webhook/bahn/on-the-road",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ order_ref: $json.order_ref, source: $json.source, event: $json.event, workflows: $json.workflows }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "q7",
+      "name": "Remove buttons?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4620,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'unbutton' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "unb",
+      "name": "Remove buttons",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4840,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/editMessageReplyMarkup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_DEMO_CHAT_ID, message_id: Number($json.message_id), reply_markup: { inline_keyboard: [] } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "q8",
+      "name": "Task?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5060,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'task' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "task",
+      "name": "Employee task",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5280,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrEscalateWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "reason": "={{ $json.reason }}",
+            "last_known_location": "={{ $json.last_known_location }}",
+            "task": "={{ $json.task }}",
+            "priority": "={{ $json.priority }}",
+            "info": "={{ $json.info }}",
+            "workflow": "={{ $json.workflow }}",
+            "ask_time": "={{ $json.ask_time || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "last_known_location",
+              "displayName": "last_known_location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "info",
+              "displayName": "info",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ask_time",
+              "displayName": "ask_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "drop-draft-if",
+      "name": "Drop draft?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3740,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.type === 'step_update' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "update-step",
+      "name": "Update step",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3960,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.fields.status }}",
+            "note": "={{ $json.fields.note }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "note",
+              "displayName": "note",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Waits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waits": {
+      "main": [
+        [
+          {
+            "node": "Proposals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposals": {
+      "main": [
+        [
+          {
+            "node": "Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Steps": {
+      "main": [
+        [
+          {
+            "node": "Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Telegram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait update?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "New wait?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Draft step?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Expire plan?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wake?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Remove buttons?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Task?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Drop draft?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait update?": {
+      "main": [
+        [
+          {
+            "node": "Update wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New wait?": {
+      "main": [
+        [
+          {
+            "node": "Wait rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait rows": {
+      "main": [
+        [
+          {
+            "node": "Insert wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft step?": {
+      "main": [
+        [
+          {
+            "node": "Step rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step rows": {
+      "main": [
+        [
+          {
+            "node": "Insert step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expire plan?": {
+      "main": [
+        [
+          {
+            "node": "Update plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wake?": {
+      "main": [
+        [
+          {
+            "node": "Wake agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove buttons?": {
+      "main": [
+        [
+          {
+            "node": "Remove buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task?": {
+      "main": [
+        [
+          {
+            "node": "Employee task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drop draft?": {
+      "main": [
+        [
+          {
+            "node": "Update step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false
+  }
+}

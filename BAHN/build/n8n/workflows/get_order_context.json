@@ -1,0 +1,354 @@
+{
+  "id": "XrWxSa9iCdGT4eNx",
+  "name": "BAHN tool · get_order_context",
+  "nodes": [
+    {
+      "id": "t1",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "view",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "t2",
+      "name": "Order context",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "A8MTWlClXgMKbxXi"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref.trim().toUpperCase() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "t3",
+      "name": "Case timeline",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref.trim().toUpperCase() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "t4",
+      "name": "Proposals",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref.trim().toUpperCase() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "t6",
+      "name": "Plan steps",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref.trim().toUpperCase() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "t5",
+      "name": "Bundle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// One bundle: dataset snapshot + what has happened in this case since (timeline, proposals, plan steps, messages, waits),\n// the tunable settings, and the simulated clock: snapshot.snapshot_now moves forward from the dataset time while the demo runs.\n// @include settings.js\nconst ref = $('Start').first().json.order_ref.trim().toUpperCase();\nconst settings = readSettings($('Settings').all().map(i => i.json).filter(r => r.key));\nconst row = $('Order context').all().map(i => i.json).find(r => r.context);\nif (!row) return [{ json: { found: false, order_ref: ref, settings, error: `No order ${ref} in otr_order_context. Check the reference.` } }];\nconst clean = r => { const { createdAt, updatedAt, ...rest } = r; return { ...rest, at: createdAt }; };\nconst rows = (n) => $(n).all().map(i => i.json).filter(r => r.order_ref).map(clean);\nconst snapshot = JSON.parse(row.context);\nsnapshot.dataset_time = snapshot.snapshot_now;\nsnapshot.snapshot_now = new Date(simNow(snapshot.snapshot_now, settings)).toISOString();\n// view 'agent' (the problem agents' tool): only recent history, long texts cut, so a long case never fills the model's context.\n// Internal callers (router, act, close gate) omit view and get everything: they count closes and match steps on the full history.\nconst agent = $('Start').first().json.view === 'agent';\nconst cutText = (r, n) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'string' && v.length > n ? v.slice(0, n) + ' [cut]' : v]));\nconst all = { case_timeline: rows('Case timeline'), case_proposals: rows('Proposals'), plan_steps: rows('Plan steps'), conversation: rows('Messages'), waits: rows('Waits') };\n// ponytail: last-N per list; keep pending proposals explicitly if a case ever has more than 4 newer ones\nconst keep = { case_timeline: [40, 700], case_proposals: [4, 6000], plan_steps: [40, 600], conversation: [30, 700], waits: [15, 400] };\nconst view = Object.fromEntries(Object.entries(all).map(([k, list]) => [k, agent ? list.slice(-keep[k][0]).map((r) => cutText(r, keep[k][1])) : list]));\nconst omitted = Object.keys(all).filter((k) => all[k].length > view[k].length).map((k) => `${all[k].length - view[k].length} older ${k}`);\nreturn [{ json: { found: true, order_ref: ref, snapshot, settings, ...view, ...(omitted.length ? { history_note: `Only recent history shown; left out: ${omitted.join(', ')}.` } : {}) } }];"
+      }
+    },
+    {
+      "id": "t7",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "t8",
+      "name": "Messages",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref.trim().toUpperCase() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "t9",
+      "name": "Waits",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WaitsTable000001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref.trim().toUpperCase() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Order context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Order context": {
+      "main": [
+        [
+          {
+            "node": "Case timeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case timeline": {
+      "main": [
+        [
+          {
+            "node": "Proposals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposals": {
+      "main": [
+        [
+          {
+            "node": "Plan steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan steps": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages": {
+      "main": [
+        [
+          {
+            "node": "Waits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waits": {
+      "main": [
+        [
+          {
+            "node": "Bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

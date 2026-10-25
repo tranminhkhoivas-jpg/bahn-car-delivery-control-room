@@ -1,0 +1,1426 @@
+{
+  "id": "5TfJgTSrsKAJ0fBz",
+  "name": "BAHN act · proposal decision",
+  "nodes": [
+    {
+      "id": "x1",
+      "name": "Decision webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b7c1e0d4-2f3a-4c5b-9d6e-7f8a9b0c1d22",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bahn/act",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "x2",
+      "name": "Get proposal",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ Number($json.body.proposal_id) }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "x3",
+      "name": "Current context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "x4",
+      "name": "Re-check and execute (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Re-check current state before acting: the proposal must still be in the right state and its basis must still hold.\n// Plans: approve books now, or sends the buyer an offer first (needs_buyer, or the employee chose 'ask_buyer');\n// buyer_accept / buyer_decline record the buyer's answer to an offer; reject sends the reason back to the agent.\n// @include travel.js\n// @include plan.js\nconst req = $('Decision webhook').first().json.body || {};\nconst p = $('Get proposal').first().json;\nconst c = $('Current context').first().json;\nconst search = $('Current options').first().json; // fresh plan_rebooking result, used by a plan's ferry step only\nconst decision = String(req.decision || '').toLowerCase();\nconst operator = String(req.operator || '').trim();\nconst note = String(req.note || '').trim();\nconst fail = (error) => [{ json: { ok: false, error } }];\nconst NEEDS = { approve: 'pending', reject: 'pending', buyer_accept: 'offered', buyer_decline: 'offered' };\nif (!p || !p.id) return fail(`No proposal #${req.proposal_id}`);\nif (!NEEDS[decision]) return fail(\"decision must be 'approve', 'reject', 'buyer_accept' or 'buyer_decline'\");\nif (!operator) return fail('operator name is required (who decided)');\nif (p.status !== NEEDS[decision]) return fail(`Proposal #${p.id} is ${p.status}; '${decision}' needs a ${NEEDS[decision]} plan. Nothing done.`);\nif (decision === 'reject' && !note) return fail('Write why you reject it in the note: the agent uses the reason to make a better plan.');\nconst basis = JSON.parse(p.basis || '{}');\nconst nowStatus = c.snapshot?.order?.status;\n// ponytail: order status is the only basis field re-checked; add last_event_id once live events flow in.\nif (['approve', 'buyer_accept'].includes(decision) && basis.order_status && nowStatus !== basis.order_status) return fail(`Stale: order status changed ${basis.order_status} -> ${nowStatus} since proposal. Ask the agent to re-propose.`);\nconst payload = JSON.parse(p.payload || '{}');\nconst isPlan = ['plan', 'rebooking_plan'].includes(p.action);\nconst plan = isPlan ? JSON.parse(payload.detail || '{}') : null;\nconst now = Date.parse(c.snapshot?.snapshot_now);\nconst S = c.settings || {};\nconst hash = (s) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; };\n// The workflows that made the plan (rationale is \"journey: why | vehicle: why\"), so a wake-up goes back to exactly them.\nconst workflows = [...new Set((String(p.rationale || '').match(/(?:^| \\| )(\\w+): /g) || []).map((x) => x.replace(/[ |:]/g, '')))].filter((w) => STAGES[w]).join(',');\nconst cust = c.snapshot?.customer?.name || 'buyer';\nconst opts = plan?.options || [];\nconst chosenKey = String(req.option || plan?.chosen || plan?.recommended || '').toUpperCase();\nconst opt = opts.find((o) => o.key === chosenKey);\nif (opts.length && ['approve', 'buyer_accept'].includes(decision) && !opt) return fail(`option must be one of ${opts.map((o) => o.key).join(', ')}`);\n// A before_booking check (filed as an open step with the plan) must be done before the plan is approved or offered.\nconst checks = (c.plan_steps || []).filter((s) => String(s.proposal_id) === String(p.id) && s.ref === 'before_booking');\nconst openCheck = checks.find((s) => s.status !== 'done');\nif (isPlan && decision === 'approve' && openCheck) return fail(`Do the check first (step #${openCheck.id}, ${openCheck.status}): ${openCheck.detail}. Mark it done, then approve; if it cannot be done, mark it 'Could not do it' with the reason and the agent re-plans.`);\nconst priorSteps = (c.plan_steps || []).filter((s) => String(s.proposal_id) === String(p.id)).length;\nconst steps = [];\nlet status, result, kase, wake = false, wakeEvent = '', newPayload = '', closeBuyer = '';\n\n// Books and sends the given plan lines (mock provider). Returns the status for the proposal.\nconst execute = (lines) => {\n  // ponytail: mock provider. 'simulate' is a test-only switch: ferry_sold_out, ferry_timeout_once, hotel_timeout.\n  const SIM = String(req.simulate || '');\n  const book = (kind, what) => {\n    const log = [];\n    const tries = Number(S.booking_retries) || 3; // Settings page\n    for (let attempt = 1; attempt <= tries; attempt++) {\n      if (SIM === kind + '_sold_out') return { ok: false, attempts: attempt, note: 'sold out at booking time' };\n      if (SIM === kind + '_timeout' || (SIM === kind + '_timeout_once' && attempt === 1)) { log.push(`attempt ${attempt}: provider timeout`); continue; }\n      return { ok: true, attempts: attempt, ref: `MOCK-${kind.toUpperCase()}-${hash(p.id + what) % 1000000}`, note: log.concat(`attempt ${attempt}: confirmed (mock)`).join('; ') };\n    }\n    return { ok: false, attempts: tries, note: log.join('; ') + `; gave up after ${tries} attempts` };\n  };\n  // Final check right before booking: a sailing, train or flight that changed price or disappeared is not booked.\n  let stale = null;\n  for (const s of lines) {\n    if (stale) break;\n    if (s.kind === 'book_ferry') {\n      const live = (search.options || []).find((o) => o.option_id === s.ref);\n      const promised = opt ? opt.on_time : plan?.on_time; // what the approved option said\n      stale = !live ? 'ferry option no longer in a fresh search' : live.ticket_cents !== s.cost_cents ? `ferry price changed EUR ${s.cost_cents / 100} -> ${live.ticket_cents / 100}`\n        : promised !== false && live.on_time === false ? `the sailing no longer arrives on time (now ${live.late_hours} h late)` : null;\n    } else if (['book_train', 'book_flight'].includes(s.kind)) {\n      const t = searchTravel({ quotes: c.snapshot?.travel_options || [], from: s.search?.from_city, to: s.search?.to_city, earliest: s.search?.earliest ? Date.parse(s.search.earliest) : now });\n      const live = t.ok && t.options.find((o) => o.option_id === s.ref);\n      stale = !live ? `${s.kind} ${s.ref} no longer available` : live.cost_cents !== s.cost_cents ? `${s.kind} price changed EUR ${s.cost_cents / 100} -> ${live.cost_cents / 100}` : null;\n    }\n  }\n  if (stale) return { stale };\n  // A failed transport booking (ferry, train, flight) stops the rest: the plan no longer works. A failed hotel does not.\n  let stopped = '', softFail = false;\n  // ponytail: buyer and delivery-contact messages are mock-sent here; Phase 4 sends them over Telegram.\n  const SENT = { customer_message: `MOCK sent to ${cust} (approved by ${operator})`, delivery_contact_message: `MOCK sent to the delivery contact (approved by ${operator})` };\n  for (const s of lines.filter((x) => !x.before_booking)) { // checks were done before approval\n    const row = { step_no: String(priorSteps + steps.length + 1), kind: s.kind, detail: s.detail, status: 'skipped', ref: '', attempts: '0', note: '' };\n    if (stopped) row.note = `skipped: ${stopped}`;\n    else if (SENT[s.kind]) Object.assign(row, { status: 'done', ref: `MOCK-MSG-${hash(p.id + s.kind) % 1000000}`, note: SENT[s.kind] });\n    else if (s.kind === 'staff_task') Object.assign(row, { status: 'waiting_for_person', note: 'A person does this, then marks it done.' });\n    else if (s.kind === 'buyer_decision') Object.assign(row, { status: 'done', ...(opt ? { detail: `Buyer chose option ${opt.key}` } : {}), note: `buyer answered: ${note || 'accepted'}` });\n    else if (/^book_(ferry|train|flight|hotel)$/.test(s.kind)) {\n      const kind = s.kind.slice(5), ref = s.ref || '', b = book(kind, ref || s.detail);\n      Object.assign(row, { status: b.ok ? 'done' : 'failed', ref: b.ok ? b.ref : ref, attempts: String(b.attempts), note: b.note });\n      if (!b.ok && ['ferry', 'train', 'flight'].includes(kind)) stopped = `${kind} not booked`;\n      if (!b.ok) softFail = true;\n    } else if (s.kind === 'notify_driver') {\n      const refs = steps.filter((x) => x.status === 'done' && /^MOCK-(FERRY|TRAIN|FLIGHT|HOTEL)/.test(x.ref)).map((x) => x.ref).join(', ');\n      const hotelFailed = steps.some((x) => x.kind === 'book_hotel' && x.status === 'failed');\n      // propose_plan writes a placeholder for the not-yet-chosen option; now say which option and what was booked.\n      const booked = steps.filter((x) => x.status === 'done' && /^book_/.test(x.kind)).map((x) => x.detail).join('; ');\n      const said = s.detail.replace('the option the buyer chooses (booking details added when it is booked).', `${opt ? `option ${opt.key}` : 'the approved option'}${booked ? `: ${booked}` : ''}.`);\n      Object.assign(row, { status: 'done', detail: `${said}${refs ? ` (booking refs: ${refs})` : ''}${hotelFailed ? ' Hotel not confirmed yet; ops will send it.' : ''}`, ref: `MOCK-MSG-${hash(p.id + 'driver') % 1000000}`, note: 'MOCK sent to driver' });\n    } else if (s.kind === 'approve_cost') Object.assign(row, { status: 'done', ref: s.ref || `MOCK-COST-${hash(p.id + s.detail) % 1000000}`, note: `MOCK: approved by ${operator}, sent to payroll` });\n    else if (s.kind === 'change_delivery_window') Object.assign(row, { status: 'done', ref: `MOCK-WIN-${hash(p.id + s.detail) % 1000000}`, note: 'MOCK: new delivery window recorded' });\n    else if (s.kind === 'cancel_delivery') Object.assign(row, { status: 'done', ref: `MOCK-CANCEL-${hash(p.id + s.detail) % 1000000}`, note: 'MOCK: delivery cancelled as agreed with the buyer' });\n    else if (s.kind === 'reassign_driver') Object.assign(row, { status: 'done', ref: s.ref, note: 'MOCK: assignment handed over' });\n    steps.push(row);\n  }\n  return { stopped, softFail };\n};\n\nif (!isPlan) {\n  // Single non-plan actions (older proposal kinds): approve = mock done, reject = nothing.\n  status = decision === 'approve' ? 'executed' : 'rejected';\n  result = decision === 'approve' ? `MOCK: done as approved: ${payload.detail}` : 'Rejected; nothing executed.';\n  kase = { status: 'in_progress', owner: 'agent', summary: `#${p.id} ${p.action} ${status} by ${operator}. Agent continues.` };\n} else if (decision === 'reject' || decision === 'buyer_decline') {\n  const who = decision === 'reject' ? `rejected by ${operator}` : `declined by the buyer (recorded by ${operator})`;\n  status = decision === 'reject' ? 'rejected' : 'declined';\n  result = `Plan ${who}: ${note || 'no reason given'}. Nothing booked.`;\n  if (decision === 'buyer_decline') closeBuyer = `declined: ${note || 'no reason given'}`;\n  kase = { status: 'in_progress', owner: 'agent', summary: `Plan #${p.id} ${who}. The agent makes a new plan; it waits for approval.` };\n  wake = true;\n  wakeEvent = `Plan #${p.id} was ${who}. Reason: \"${note || 'none given'}\". Make one new plan that avoids this reason. Reuse finished stages; ask nobody again for facts you already have.`;\n} else if (decision === 'approve' && (plan.needs_buyer || req.send === 'ask_buyer')) {\n  // Offer to the buyer first. Nothing is booked; the driver keeps to the current plan until the buyer answers.\n  const until = plan.valid_until ? Date.parse(plan.valid_until) : now + (Number(S.offer_valid_min) || 120) * 6e4;\n  const untilLocal = plan.valid_until_local || localTime(until, plan.buyer_zone || 'Europe/Helsinki');\n  newPayload = JSON.stringify({ ...payload, detail: JSON.stringify({ ...plan, valid_until: new Date(until).toISOString(), valid_until_local: untilLocal, offered_at: new Date(now).toISOString(), offered_by: operator }) });\n  const msg = plan.steps.find((s) => s.kind === 'customer_message');\n  const ask = plan.steps.find((s) => s.kind === 'buyer_decision');\n  const choices = opts.length ? `options ${opts.map((o) => o.key).join(', ')}` : 'yes or no';\n  execute([msg || { kind: 'customer_message', detail: `Offer for ${c.order_ref}: ${payload.summary}` }]);\n  steps.push({ step_no: String(priorSteps + steps.length + 1), kind: 'notify_driver', detail: 'Keep to your current plan for now. We confirm any change as soon as the buyer has answered.', status: 'done', ref: `MOCK-MSG-${hash(p.id + 'keep') % 1000000}`, attempts: '0', note: 'MOCK sent to driver (status update, no new instruction)' });\n  steps.push({ step_no: String(priorSteps + steps.length + 1), kind: 'buyer_decision', detail: ask?.detail || `Buyer chooses: ${choices}`, status: 'waiting_for_person', ref: '', attempts: '0', note: `Waiting for the buyer (${choices}) until ${untilLocal}. Record the answer with buyer accept or decline.` });\n  status = 'offered';\n  result = `Offer sent to the buyer (${choices}), valid until ${untilLocal}. Nothing booked yet.`;\n  kase = { status: 'waiting_on_person', owner: 'buyer', summary: `Plan #${p.id} offered to the buyer until ${untilLocal}. Nothing booked until they answer.` };\n} else {\n  // Book now (employee approved an on-time plan), or the buyer accepted the offer.\n  const accept = decision === 'buyer_accept';\n  if (accept && plan.valid_until && now > Date.parse(plan.valid_until)) {\n    status = 'expired';\n    result = `Buyer answered after the offer deadline ${plan.valid_until_local || plan.valid_until}; decisions after that time are no longer valid. Nothing booked.`;\n    closeBuyer = `answered too late (${note || 'accepted'})`;\n    kase = { status: 'in_progress', owner: 'agent', summary: `Offer #${p.id} expired before the buyer answered. A revised plan follows; it waits for approval.` };\n    wake = true;\n    wakeEvent = `Offer #${p.id} expired at ${plan.valid_until_local || plan.valid_until} before the buyer answered (late answer: \"${note || 'accept'}\"${opt ? `, option ${opt.key}` : ''}). Make a revised plan with fresh options; it goes to the buyer again.`;\n  } else {\n    // Messages to the buyer were already sent with the offer; the delivery contact hears only now, with the final time.\n    const lines = (opt ? opt.steps : []).concat(plan.steps).filter((s) => !(accept && s.kind === 'customer_message'));\n    const r = execute(accept ? lines.filter((s) => s.kind !== 'buyer_decision') : lines);\n    if (accept) closeBuyer = `accepted${opt ? ` option ${opt.key}` : ''}${note ? `: ${note}` : ''}`;\n    const tag = opt ? ` option ${opt.key}` : '';\n    if (r.stale) {\n      status = 'failed'; result = `Final check before booking failed, nothing booked: ${r.stale}.`;\n      kase = { status: 'in_progress', owner: 'agent', summary: `Plan #${p.id}${tag} not booked: ${r.stale}. The agent re-plans${accept ? ' and the buyer is asked again' : ''}.` };\n      wake = true;\n      wakeEvent = `Plan #${p.id}${tag} was ${accept ? 'accepted by the buyer' : `approved by ${operator}`} but the final check failed: ${r.stale}. Make a new plan with fresh options${accept ? '; the buyer must choose again' : ''}.`;\n    } else {\n      const open = steps.filter((x) => ['failed', 'waiting_for_person'].includes(x.status)).map((x) => `${x.kind} (${x.status})`);\n      const booked = steps.filter((x) => x.status === 'done' && /^book_/.test(x.kind)).map((x) => x.ref);\n      result = steps.map((x) => `${x.step_no}. ${x.kind}: ${x.status}${x.ref ? ' ' + x.ref : ''}`).join(' | ');\n      if (r.stopped) {\n        status = 'failed';\n        kase = { status: 'in_progress', owner: 'agent', summary: `Plan #${p.id} failed: ${r.stopped} (${steps.find((x) => x.status === 'failed')?.note}). The agent is re-planning; its new plan waits for approval.` };\n      } else {\n        status = r.softFail ? 'partly_executed' : 'executed';\n        kase = open.length ? { status: r.softFail ? 'needs_decision' : 'waiting_on_person', owner: 'operator', summary: `Plan #${p.id}${tag} done (mock)${booked.length ? ': ' + booked.join(', ') : ''}. Open: ${open.join(', ')}. Mark each step done when handled.` }\n          : { status: 'in_progress', owner: 'agent', summary: `Plan #${p.id}${tag} done (mock)${booked.length ? ': ' + booked.join(', ') : ''}. Agent continues.` };\n      }\n      // Wake the agent when a booking failed (it re-plans; a person approves the new plan), or when nothing is left for a person.\n      const failed = status === 'failed' || steps.some((x) => x.status === 'failed');\n      // A buyer's answer to a question (no options) always goes back to the agent: it plans the next stage from it.\n      wake = failed || !steps.some((x) => x.status === 'waiting_for_person') || (accept && !opts.length);\n      const how = accept ? `accepted by the buyer${tag}${note ? ` (\"${note}\")` : ''}` : `approved by ${operator}${tag}`;\n      wakeEvent = failed ? `Plan #${p.id} was ${how} but could not be fully booked (mock): ${result}. Re-plan only what failed: keep what is booked, the failed option is excluded from searches. File one new plan; a person approves it.`\n        : `Plan #${p.id} was ${how} and executed (mock): ${result}. Do the next stage, or finish the case if nothing is left.`;\n    }\n  }\n}\nreturn [{ json: { ok: true, id: p.id, order_ref: p.order_ref, action: p.action, summary: payload.summary,\n  update: { status, decided_by: operator, decision_note: note, result, ...(newPayload ? { payload: newPayload } : {}) }, case: kase,\n  wake, wake_event: wakeEvent, workflows, close_buyer: closeBuyer,\n  steps: steps.map((x) => ({ order_ref: p.order_ref, proposal_id: String(p.id), ...x, updated_by: 'act workflow' })) } }];\n"
+      }
+    },
+    {
+      "id": "x5",
+      "name": "OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "x6",
+      "name": "Update fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $json.update }];"
+      }
+    },
+    {
+      "id": "x7",
+      "name": "Update proposal",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Re-check and execute (mock)').first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "x8",
+      "name": "Case row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Re-check and execute (mock)').first().json;\nreturn [{ json: { order_ref: d.order_ref, ...d.case } }];"
+      }
+    },
+    {
+      "id": "x9",
+      "name": "Upsert case",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bDV4O3vt5BIv0eH8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $json.order_ref }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "x10",
+      "name": "Timeline row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Re-check and execute (mock)').first().json;\nreturn [{ json: { order_ref: d.order_ref, actor: `operator ${d.update.decided_by}`, kind: 'decision', text: `${d.update.status.toUpperCase()} #${d.id} ${d.action}${d.update.decision_note ? ' (note: ' + d.update.decision_note + ')' : ''}. ${d.update.result}`, source_ref: `proposal:${d.id}` } }];"
+      }
+    },
+    {
+      "id": "x11",
+      "name": "Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "x12",
+      "name": "Return done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Re-check and execute (mock)').first().json;\nconst steps = $('Insert steps').isExecuted ? $('Insert steps').all().map(i => ({ step_id: i.json.id, kind: i.json.kind, status: i.json.status, ref: i.json.ref, note: i.json.note })) : [];\nreturn [{ json: { ok: true, proposal_id: d.id, order_ref: d.order_ref, status: d.update.status, result: d.update.result, case: d.case, steps, agent_woken: $('Wake agent').isExecuted } }];"
+      }
+    },
+    {
+      "id": "x13",
+      "name": "Return error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        120
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, error: $('Re-check and execute (mock)').first().json.error } }];"
+      }
+    },
+    {
+      "id": "x13",
+      "name": "Current options",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        550,
+        160
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanRebookingWf1"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Get proposal').first().json.order_ref || '' }}",
+            "ready_at": "={{ (() => { try { return JSON.parse(JSON.parse($('Get proposal').first().json.payload).detail).ready_at || ''; } catch (e) { return ''; } })() }}",
+            "days": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ready_at",
+              "displayName": "ready_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "days",
+              "displayName": "days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "x15",
+      "name": "Has steps?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Re-check and execute (mock)').first().json.steps.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "x16",
+      "name": "Step rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return $('Re-check and execute (mock)').first().json.steps.map(s => ({ json: s }));"
+      }
+    },
+    {
+      "id": "x14",
+      "name": "Insert steps",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "name": "Wake?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Re-check and execute (mock)').first().json.wake === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "executeOnce": true,
+      "position": [
+        2400,
+        300
+      ],
+      "id": "91360a77-19c8-1d5b-444e-27aa815660c8"
+    },
+    {
+      "name": "Wake agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OqZ8ylefc5OZxgo0"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Re-check and execute (mock)').first().json.order_ref }}",
+            "event": "={{ $('Re-check and execute (mock)').first().json.wake_event }}",
+            "source": "follow_up",
+            "workflows": "={{ $('Re-check and execute (mock)').first().json.workflows }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflows",
+              "displayName": "workflows",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "executeOnce": true,
+      "position": [
+        2600,
+        200
+      ],
+      "id": "3a8a7cd0-a0f2-a7cf-7762-2f27f5aa3e11"
+    },
+    {
+      "id": "act-cn",
+      "name": "Check note",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4180,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrCheckNoteWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "note": "={{ $('Decision webhook').first().json.body.note || '' }}",
+            "purpose": "reason for rejecting a plan",
+            "context": "={{ (() => { try { return JSON.parse($('Get proposal').first().json.payload).summary || ''; } catch (e) { return ''; } })() }}",
+            "skip": "={{ ((String($('Decision webhook').first().json.body.decision || '').toLowerCase() !== 'reject' || String($('Decision webhook').first().json.body.confirm_unclear) === 'true') ? 'true' : 'false') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "note",
+              "displayName": "note",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "purpose",
+              "displayName": "purpose",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "context",
+              "displayName": "context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "skip",
+              "displayName": "skip",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "act-nc",
+      "name": "Note clear?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4400,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "act-unclear",
+      "name": "Return unclear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The note is too vague for the agent: nothing changed; the employee edits it or confirms it as is.\nreturn [{ json: { ok: false, unclear: true, score: $json.score, question: $json.question, error: `The note is unclear. ${$json.question} Edit the note, or send it again with confirm_unclear to keep it.` } }];"
+      }
+    },
+    {
+      "id": "act-bsf",
+      "name": "Buyer step fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Re-check and execute (mock)').first().json;\nreturn [{ json: { status: 'done', note: 'buyer ' + (d.close_buyer || 'n/a'), updated_by: d.update.decided_by } }];"
+      }
+    },
+    {
+      "id": "act-cbs",
+      "name": "Close buyer step",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5060,
+        0
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanStepsTable01"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "proposal_id",
+              "condition": "eq",
+              "keyValue": "={{ String($('Re-check and execute (mock)').first().json.id) }}"
+            },
+            {
+              "keyName": "kind",
+              "condition": "eq",
+              "keyValue": "={{ $('Re-check and execute (mock)').first().json.close_buyer ? 'buyer_decision' : '-none-' }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "waiting_for_person"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "outbox",
+      "name": "Outbox",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Messages this decision released (status done this run) go out over Telegram. The buyer's offer carries one button per option.\n// @include offer.js\nconst d = $('Re-check and execute (mock)').first().json;\nconst ROLE = { customer_message: 'buyer', delivery_contact_message: 'delivery_contact', notify_driver: 'driver' };\nlet plan = {}; try { plan = JSON.parse(JSON.parse(d.update.payload || '{}').detail || '{}'); } catch {}\nconst offer = d.update.status === 'offered';\nconst buttons = offer ? offerButtons(plan) : [];\nconst items = (d.steps || []).filter((s) => ROLE[s.kind] && s.status === 'done').map((s) => ({ json: { order_ref: d.order_ref, role: ROLE[s.kind], proposal_id: String(d.id), kind: s.kind,\n  text: s.kind === 'customer_message' && offer ? `${s.detail}\\n\\nPlease choose by ${plan.valid_until_local || 'the deadline'}.` : s.detail, buttons: JSON.stringify(s.kind === 'customer_message' ? buttons : []) } }));\nreturn items.length ? items : [{ json: { skip: true } }];"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "outq",
+      "name": "Anything to send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5500,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "tgsend",
+      "name": "Send on Telegram",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5720,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "role": "={{ $json.role }}",
+            "text": "={{ $json.text }}",
+            "proposal_id": "={{ $json.proposal_id }}",
+            "kind": "={{ $json.kind }}",
+            "buttons": "={{ $json.buttons }}",
+            "reply_to": "",
+            "from_sim": "false"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "mode": "each"
+      }
+    },
+    {
+      "id": "wonce",
+      "name": "Wake once",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5940,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: {} }];"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "claimfields",
+      "name": "Claim fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Mark the plan as being decided so a second click (or a second person) cannot run it twice.\nreturn [{ json: { status: 'deciding' } }];"
+      }
+    },
+    {
+      "id": "claim",
+      "name": "Claim",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        550,
+        200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ Number($('Decision webhook').first().json.body.proposal_id) }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "={{ ({ approve: 'pending', reject: 'pending', buyer_accept: 'offered', buyer_decline: 'offered' })[String($('Decision webhook').first().json.body.decision || '').toLowerCase()] || 'none' }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "claimed",
+      "name": "Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ Boolean($json.id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "returnbusy",
+      "name": "Return busy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Someone else is deciding this plan right now, or it was already decided.\nreturn [{ json: { ok: false, error: `Proposal #${$('Decision webhook').first().json.body.proposal_id} is being decided by someone else or was already decided. Reload the page.` } }];"
+      }
+    },
+    {
+      "id": "restorefields",
+      "name": "Restore fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Nothing was done: the plan goes back to the state it was in.\nreturn [{ json: { status: $('Get proposal').first().json.status } }];"
+      }
+    },
+    {
+      "id": "restore",
+      "name": "Restore",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "yy3neHejmWqEtPKG"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ Number($('Get proposal').first().json.id) }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Decision webhook": {
+      "main": [
+        [
+          {
+            "node": "Get proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get proposal": {
+      "main": [
+        [
+          {
+            "node": "Current context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current context": {
+      "main": [
+        [
+          {
+            "node": "Check note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-check and execute (mock)": {
+      "main": [
+        [
+          {
+            "node": "OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK?": {
+      "main": [
+        [
+          {
+            "node": "Update fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restore fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update fields": {
+      "main": [
+        [
+          {
+            "node": "Update proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update proposal": {
+      "main": [
+        [
+          {
+            "node": "Case row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case row": {
+      "main": [
+        [
+          {
+            "node": "Upsert case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert case": {
+      "main": [
+        [
+          {
+            "node": "Timeline row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timeline row": {
+      "main": [
+        [
+          {
+            "node": "Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log": {
+      "main": [
+        [
+          {
+            "node": "Buyer step fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current options": {
+      "main": [
+        [
+          {
+            "node": "Claim fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has steps?": {
+      "main": [
+        [
+          {
+            "node": "Step rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step rows": {
+      "main": [
+        [
+          {
+            "node": "Insert steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert steps": {
+      "main": [
+        [
+          {
+            "node": "Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wake?": {
+      "main": [
+        [
+          {
+            "node": "Wake agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wake agent": {
+      "main": [
+        [
+          {
+            "node": "Return done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check note": {
+      "main": [
+        [
+          {
+            "node": "Note clear?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note clear?": {
+      "main": [
+        [
+          {
+            "node": "Current options",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return unclear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buyer step fields": {
+      "main": [
+        [
+          {
+            "node": "Close buyer step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close buyer step": {
+      "main": [
+        [
+          {
+            "node": "Has steps?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outbox": {
+      "main": [
+        [
+          {
+            "node": "Anything to send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to send?": {
+      "main": [
+        [
+          {
+            "node": "Send on Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wake?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send on Telegram": {
+      "main": [
+        [
+          {
+            "node": "Wake once",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wake once": {
+      "main": [
+        [
+          {
+            "node": "Wake?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim fields": {
+      "main": [
+        [
+          {
+            "node": "Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim": {
+      "main": [
+        [
+          {
+            "node": "Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Re-check and execute (mock)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore fields": {
+      "main": [
+        [
+          {
+            "node": "Restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore": {
+      "main": [
+        [
+          {
+            "node": "Return error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

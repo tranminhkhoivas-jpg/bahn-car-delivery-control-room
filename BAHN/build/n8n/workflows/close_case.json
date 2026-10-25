@@ -1,0 +1,447 @@
+{
+  "id": "Y78nly3QoP0HWn1H",
+  "name": "BAHN tool · close_case (GLiDE gate)",
+  "nodes": [
+    {
+      "id": "k1",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "reason",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "k2",
+      "name": "Get context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "k3",
+      "name": "Hard checks + GLiDE request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Two gates. 1) Code rules that GLiDE can never override. 2) GLiDE judges the rest from the evidence.\nconst c = $json;\nconst reason = String($('Start').first().json.reason || '').trim();\nif (!c.found) return [{ json: { blocked: c.error } }];\nconst s = c.snapshot;\nconst pending = c.case_proposals.filter(p => p.status === 'pending');\nconst openIncidents = (s.incidents || []).filter(i => !['RESOLVED', 'CLOSED'].includes(i.status));\n// A failed booking stops counting once a later plan booked the same kind (ferry, hotel, train, flight).\nconst steps = c.plan_steps || [];\nconst rebooked = (p) => /^book_/.test(p.kind) && steps.some(q => q.kind === p.kind && q.status === 'done' && q.id > p.id);\nconst openSteps = steps.filter(p => p.status === 'waiting_for_person' || (p.status === 'failed' && !rebooked(p)));\nconst blocks = [];\nif (pending.length) blocks.push(`${pending.length} proposal(s) still waiting for a person (#${pending.map(p => p.id).join(', #')})`);\nif (openIncidents.length) blocks.push(`open incident(s) ${openIncidents.map(i => `${i.kind} ${i.status}`).join(', ')} need a human owner to resolve`);\nif (openSteps.length) blocks.push(`${openSteps.length} plan step(s) still open (${openSteps.map(p => `#${p.id} ${p.kind} ${p.status}`).join(', ')})`);\nif (!reason) blocks.push('reason is required: say what was checked and why nothing needs a decision');\nif (blocks.length) return [{ json: { blocked: blocks.join('; ') } }];\nconst state = {\n  snapshot_now: s.snapshot_now,\n  agent_reason_for_closing: reason,\n  order: { ref: c.order_ref, status: s.order.status },\n  alerts: (s.alerts || []).map(a => ({ id: a.id, signal: a.signal, severity: a.severity, status: a.status, summary: a.summary })),\n  open_work_items: (s.work_items || []).filter(w => w.status !== 'CLOSED').map(w => ({ kind: w.kind, next_action: w.next_action })),\n  delivery_windows: (s.time_windows || []).map(w => ({ purpose: w.purpose, start: w.start_at, end: w.end_at })),\n  latest_tracking: (s.tracking_latest || []).slice(-1),\n  travel_reservations: (s.travel_reservations || []).map(r => ({ route: r.route_label, departs: r.departure_at, cutoff: r.check_in_cutoff_at, state: r.snapshot_journey_state })),\n  case_timeline: c.case_timeline.slice(-12).map(t => `${t.actor}: ${t.text}`),\n  decided_proposals: c.case_proposals.map(p => ({ id: p.id, action: p.action, status: p.status })),\n};\nconst glide_body = {\n  model: 'fastino/GLiDE', store: false, state,\n  questions: {\n    can_close: {\n      type: 'noul',\n      instructions: 'Using only the evidence in the state, is every issue on this delivery either resolved or verified fine (for example the driver confirmed position and on-time progress), so that no person needs to decide anything about a booking, delivery date, cost or customer message?',\n      criteria: { true: 'Everything is resolved or verified; the case can be closed with a log entry', false: 'Something is unresolved, unverified, at risk of missing a promised time, or needs a human decision' },\n    },\n  },\n};\nreturn [{ json: { blocked: null, glide_body } }];"
+      }
+    },
+    {
+      "id": "k4",
+      "name": "Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !!$json.blocked }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "k5",
+      "name": "GLiDE v1.2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "k6",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// ponytail: placeholder threshold from the Settings page; tune on labelled cases before trusting it more.\nconst THRESHOLD = $('Get context').first().json.settings?.glide_close ?? 0.8;\nconst a = $json.answers?.can_close;\nconst ref = $('Get context').first().json.order_ref;\nconst reason = $('Start').first().json.reason;\nif (!a) return [{ json: { close: false, order_ref: ref, reason, verdict: `GLiDE unavailable (${$json.error?.message || 'no answer'}); not closing. Hand to a person instead.` } }];\nconst p = Number(a.noul);\nconst close = p >= THRESHOLD;\nreturn [{ json: { close, order_ref: ref, glide_noul: p, glide_confidence: a.confidence, reason,\n  verdict: close ? `GLiDE: safe to close (p=${p.toFixed(2)})` : `GLiDE: keep open (p=${p.toFixed(2)} < ${THRESHOLD}); something still needs a person or more evidence.` } }];"
+      }
+    },
+    {
+      "id": "k7",
+      "name": "Close?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.close }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "k8",
+      "name": "Closed case row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { order_ref: $json.order_ref, status: 'closed_by_agent', owner: 'agent', summary: `Closed without a person. ${$json.reason} (${$json.verdict})` } }];"
+      }
+    },
+    {
+      "id": "k9",
+      "name": "Upsert case",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "bDV4O3vt5BIv0eH8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $json.order_ref }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "k10",
+      "name": "Timeline row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Decide').first().json;\nreturn [{ json: { order_ref: d.order_ref, actor: 'agent + GLiDE', kind: d.close ? 'closed' : 'close_refused', text: `${d.close ? 'Closed' : 'Close refused'}. Agent reason: ${d.reason}. ${d.verdict}`, source_ref: 'close_case' } }];"
+      }
+    },
+    {
+      "id": "k11",
+      "name": "Log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "k12",
+      "name": "Return",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Decide').first().json;\nreturn [{ json: { closed: d.close, verdict: d.verdict, next: d.close ? 'Case closed and logged.' : 'Case stays open. If a decision is needed, use propose_action; otherwise gather more evidence.' } }];"
+      }
+    },
+    {
+      "id": "k13",
+      "name": "Return blocked",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { closed: false, verdict: 'BLOCKED by rule: ' + $json.blocked, next: 'Case stays open. Use propose_action for anything a person must decide.' } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get context": {
+      "main": [
+        [
+          {
+            "node": "Hard checks + GLiDE request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hard checks + GLiDE request": {
+      "main": [
+        [
+          {
+            "node": "Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Return blocked",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GLiDE v1.2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GLiDE v1.2": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Close?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close?": {
+      "main": [
+        [
+          {
+            "node": "Closed case row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Timeline row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closed case row": {
+      "main": [
+        [
+          {
+            "node": "Upsert case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert case": {
+      "main": [
+        [
+          {
+            "node": "Timeline row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timeline row": {
+      "main": [
+        [
+          {
+            "node": "Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log": {
+      "main": [
+        [
+          {
+            "node": "Return",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

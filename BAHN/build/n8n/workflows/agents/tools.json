@@ -1,0 +1,10 @@
+{
+  "journey": { "label": "Journey disruptions", "tools": ["get_order_context", "message_driver", "check_journey", "plan_rebooking", "plan_driver_travel", "propose_plan", "create_employee_task", "close_case", "log_stage"] },
+  "vehicle": { "label": "Vehicle problems", "tools": ["get_order_context", "message_driver", "check_journey", "propose_plan", "create_employee_task", "close_case", "journey_disruption", "log_stage"] },
+  "destination": { "label": "Destination problems", "tools": ["get_order_context", "message_driver", "check_journey", "propose_plan", "create_employee_task", "close_case", "journey_disruption", "log_stage"] },
+  "tracking": { "label": "Tracking problems", "tools": ["get_order_context", "message_driver", "check_journey", "propose_plan", "create_employee_task", "close_case", "journey_disruption", "log_stage"] },
+  "incident": { "label": "Incident and urgent", "tools": ["get_order_context", "message_driver", "check_journey", "plan_driver_travel", "propose_plan", "create_employee_task", "close_case", "journey_disruption", "log_stage"] },
+  "documents": { "label": "Documents", "tools": ["get_order_context", "message_driver", "check_journey", "propose_plan", "create_employee_task", "close_case", "journey_disruption", "log_stage"] },
+  "expenses": { "label": "Driver expenses", "tools": ["get_order_context", "message_driver", "propose_plan", "create_employee_task", "close_case", "log_stage"] },
+  "general": { "label": "General", "tools": ["get_order_context", "message_driver", "check_journey", "plan_rebooking", "plan_driver_travel", "propose_plan", "create_employee_task", "close_case", "log_stage"] }
+}

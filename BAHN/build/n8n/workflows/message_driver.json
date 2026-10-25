@@ -1,0 +1,647 @@
+{
+  "id": "v6W1UGVTeY4T6vFI",
+  "name": "BAHN tool · message_driver",
+  "nodes": [
+    {
+      "id": "m1",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "recipient_type",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "m2",
+      "name": "Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Hard rule enforced here, not in the prompt: the agent may only write to drivers or pickup sites, never to a customer (anyone who pays).\nconst { order_ref = '', recipient_type = '', text = '' } = $json;\nconst who = String(recipient_type).trim().toLowerCase();\nconst noName = $json.from_staff && !String($json.operator || '').trim();\nconst allowed = ['driver', 'pickup_site'].includes(who) && String(text).trim().length > 0 && !noName;\nreturn [{ json: {\n  allowed, who, operator: String($json.operator || ''), order_ref: String(order_ref).trim().toUpperCase(), text: String(text).trim(),\n  refusal: allowed ? null : noName ? 'REFUSED: write your name (operator) so the driver message shows who sent it.' : !String(text).trim() ? \"REFUSED: text is empty; write the message to send.\" : `REFUSED: message_driver can only write to recipient_type 'driver' or 'pickup_site' (got '${recipient_type}'). Customer messages need a person: use propose_action with action 'customer_message'.`,\n} }];"
+      }
+    },
+    {
+      "id": "m3",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.allowed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "m4",
+      "name": "Outgoing row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { order_ref: $json.order_ref, actor: $json.operator ? `staff (${$json.operator})` : 'agent', kind: $json.who === 'driver' ? 'driver_message' : 'site_message', text: `To ${$json.who}: ${$json.text}`, source_ref: 'message_driver' } }];"
+      }
+    },
+    {
+      "id": "m5",
+      "name": "Log outgoing",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "m6",
+      "name": "Simulated driver",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "f2VgRULg3vc4zeNy"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Guard').first().json.order_ref }}",
+            "text": "={{ $('Guard').first().json.text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "m7",
+      "name": "Reply row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { order_ref: $('Guard').first().json.order_ref, actor: 'driver (simulated)', kind: 'driver_message', text: $json.reply || '(no reply)', source_ref: 'simulated_driver' } }];"
+      }
+    },
+    {
+      "id": "m8",
+      "name": "Log reply",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "m9",
+      "name": "Return reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const reply = $('Reply row').first().json.text;\nreturn [{ json: { sent: true, recipient: $('Guard').first().json.who, driver_reply: reply,\n  note: reply === '(no reply)' ? 'No answer. Ask once more; if there is still no answer, call escalate_urgent with the last known position from check_journey.' : 'Message and reply are logged on the case timeline.' } }];"
+      }
+    },
+    {
+      "id": "m10",
+      "name": "Return refusal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        120
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { sent: false, error: $json.refusal } }];"
+      }
+    },
+    {
+      "id": "post",
+      "name": "Post to driver",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2200,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Guard').first().json.order_ref }}",
+            "role": "driver",
+            "text": "={{ $('Guard').first().json.text }}",
+            "proposal_id": "",
+            "kind": "driver_message",
+            "buttons": "[]",
+            "reply_to": "",
+            "from_sim": "false"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "postr",
+      "name": "Post reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2420,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Guard').first().json.order_ref }}",
+            "role": "driver",
+            "text": "={{ $('Reply row').first().json.text }}",
+            "proposal_id": "",
+            "kind": "driver_reply",
+            "buttons": "[]",
+            "reply_to": "={{ $('Post to driver').first().json.tg_message_id || '' }}",
+            "from_sim": "true"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "staffwebhook",
+      "name": "Staff webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        220
+      ],
+      "webhookId": "bahn-message-driver",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bahn/message-driver",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "fromstaff",
+      "name": "From staff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        220
+      ],
+      "parameters": {
+        "jsCode": "// A staff member's message to the driver; the operator name is required and shown on the timeline.\nconst b = $json.body || {};\nreturn [{ json: { order_ref: b.order_ref, recipient_type: 'driver', text: b.text, operator: String(b.operator || '').trim(), from_staff: true } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard": {
+      "main": [
+        [
+          {
+            "node": "Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Outgoing row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return refusal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outgoing row": {
+      "main": [
+        [
+          {
+            "node": "Log outgoing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log outgoing": {
+      "main": [
+        [
+          {
+            "node": "Post to driver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulated driver": {
+      "main": [
+        [
+          {
+            "node": "Reply row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply row": {
+      "main": [
+        [
+          {
+            "node": "Log reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log reply": {
+      "main": [
+        [
+          {
+            "node": "Post reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to driver": {
+      "main": [
+        [
+          {
+            "node": "Simulated driver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post reply": {
+      "main": [
+        [
+          {
+            "node": "Return reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Staff webhook": {
+      "main": [
+        [
+          {
+            "node": "From staff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "From staff": {
+      "main": [
+        [
+          {
+            "node": "Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

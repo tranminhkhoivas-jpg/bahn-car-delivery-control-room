@@ -1,0 +1,1850 @@
+{
+  "name": "BAHN area · On the road (agent)",
+  "id": "OqZ8ylefc5OZxgo0",
+  "nodes": [
+    {
+      "id": "a1",
+      "name": "Event webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "5d0c7a52-3b1e-4f0e-9a51-0b7f1c2e9a11",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bahn/on-the-road",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "a2",
+      "name": "Operator chat",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "webhookId": "8e3f2b6a-6c4d-4f7a-b1e2-3c9d8a7f6e21",
+      "parameters": {
+        "public": true,
+        "options": {
+          "responseMode": "lastNode",
+          "title": "Bahn · On the road",
+          "subtitle": "Name an order (e.g. CD-420322) and what happened."
+        }
+      },
+      "position": [
+        0,
+        180
+      ]
+    },
+    {
+      "name": "Follow-up",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "event",
+              "type": "string"
+            },
+            {
+              "name": "source",
+              "type": "string"
+            },
+            {
+              "name": "workflows",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "0ba15a42-7c59-927f-f3bb-8e1dd0f35833",
+      "position": [
+        0,
+        360
+      ]
+    },
+    {
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Three entry points become one shape. Webhook = system event (alert, driver message). Chat = operator. Follow-up = a person finished a step.\n// Every run gets a run id (drafts and the event row carry it). A wake-up names its workflows, so routing is exact.\nconst run_id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);\nconst j = $json;\nif (j.chatInput !== undefined) {\n  const refs = [...new Set((String(j.chatInput).match(/CD-\\d{6}/gi) || []).map((r) => r.toUpperCase()))];\n  if (refs.length > 1) return [{ json: { order_ref: '', error: `You named ${refs.join(' and ')}. One order per message, please: which one is this about?` } }];\n  return [{ json: { order_ref: refs[0] || '', run_id, kind: 'chat', source: 'operator chat', text: String(j.chatInput), simulate: '', workflows: [] } }];\n}\nconst b = j.body || j;\nconst ref = String(b.order_ref || '').trim().toUpperCase();\nconst kind = b.source === 'follow_up' ? 'follow_up' : 'event';\nconst workflows = String(b.workflows || '').split(',').map((x) => x.trim()).filter(Boolean);\nreturn [{ json: { order_ref: ref, run_id, kind, source: b.source || 'system', text: String(b.event || 'Review this order now.'), simulate: String(b.simulate || ''), workflows } }];"
+      },
+      "id": "6cf29b0c-ff6a-b0ab-106b-d03c7b38eab6",
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "id": "rr1",
+      "name": "Has order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.order_ref }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "name": "No order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{ json: { output: $json.error || 'Name an order reference like CD-420322 so I can route it.' } }];"
+      },
+      "id": "c1ddcd0e-f472-216b-78c2-ec4066755e47",
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "name": "Get context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Normalize').first().json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "c87e13d0-816b-889f-d4d0-e495b50603b9",
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "name": "Classify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Step 1 of routing, by code: dataset alert/incident codes named in the event map straight to a workflow.\n// Step 2 (next node): GLiDE answers one yes/no question per workflow about the free text.\nconst CODES = {\n  VEHICLE_WARNING: 'vehicle', SAFETY_STOP: 'vehicle',\n  FERRY_SOLD_OUT: 'journey', FERRY_CONNECTION_RISK: 'journey', TRAVEL_CAPACITY: 'journey', POSITIONING_AT_RISK: 'journey', DELIVERY_PROMISE_UNACHIEVABLE: 'journey',\n  TRACKING_GAP: 'tracking', FERRY_TRACKING_GAP_CONTEXT: 'tracking',\n  DELIVERY_ACCESS_RISK: 'destination', SITE_ACCESS_CONFLICT: 'destination', SITE_ACCESS_UNCONFIRMED: 'destination',\n  RELEASE_DOCUMENT_UNCLEAR: 'documents', PICKUP_PROOF_REJECTED: 'documents',\n  DRIVER_AVAILABILITY_RISK: 'driver_availability', // GLiDE decides: rest (journey) or cannot continue (incident)\n};\nconst Q = {\n  vehicle: ['Is there a problem with the car itself: warning light, breakdown, damage, flat tyre, fuel or charge trouble, car will not start, or a stop because of the car?', 'A problem with the car', 'No problem with the car'],\n  journey: ['Is the delivery late or at risk of being late, or is a ferry, train or connection missed, sold out or at risk, or must the driver rest (driving-hours limit, tired, mildly unwell) or slow down for traffic or weather?', 'Timing, connection or rest problem', 'No timing problem'],\n  destination: ['Is there a problem at the delivery place: no access, closed, nobody to receive the car, wrong or changed address, buyer not available?', 'Problem at the delivery place', 'No delivery place problem'],\n  tracking: [\"Has the car's tracking or GPS position stopped updating, gone missing, or does it look wrong?\", 'Tracking problem', 'Tracking is fine or not mentioned'],\n  incident: [\"Is this urgent for a person's safety or the car's security: accident, injury, medical emergency, theft, police, threat, or the driver cannot continue the job at all?\", 'Urgent safety or security problem', 'Not urgent'],\n  documents: ['Is a document missing, unclear or wrong: release note, registration papers, key handover paperwork, proof of pickup or delivery?', 'Document problem', 'No document problem'],\n  expenses: ['Is this about money the driver spent or wants back: fuel, charging, parking, tolls, hotel, train or flight receipts, reimbursement?', 'Driver expense', 'Not about driver expenses'],\n  driver_cannot_continue: ['Does the driver say they cannot continue this job at all, so a replacement driver is needed (not just a rest or a delay)?', 'Driver cannot continue, replacement needed', 'Driver can continue, maybe after rest'],\n};\nconst n = $('Normalize').first().json;\nconst c = $json;\nconst found = Object.keys(CODES).filter((k) => new RegExp(`\\\\b${k}\\\\b`).test(n.text));\nconst glide_body = { model: 'fastino/GLiDE', store: false,\n  state: { event: n.text, order_status: c.snapshot?.order?.status || 'unknown' },\n  questions: Object.fromEntries(Object.entries(Q).map(([k, [instructions, yes, no]]) => [k, { type: 'noul', instructions, criteria: { true: yes, false: no } }])) };\nreturn [{ json: { codes: found, code_workflows: [...new Set(found.map((k) => CODES[k]))], need_glide: n.kind !== 'follow_up', glide_body } }];"
+      },
+      "id": "8fa333e5-9a1b-df50-e660-15cc6f5d4be8",
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "name": "Need GLiDE?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.need_glide }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0994f156-1725-8144-af8f-9bca7fac0e81",
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "name": "GLiDE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "id": "698f29a6-40c5-8d1e-d363-0f0d52802bb4",
+      "position": [
+        1760,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "name": "Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Step 3: decide which problem workflows run. Rules enforced here, not in prompts:\n// - root cause wins: vehicle, documents, destination or incident -> journey is dropped (they call journey themselves if timing is hit)\n// - tracking runs alongside the others; journey alone only for a delay with no other cause\n// - no double requests: an open case keeps one memory session per workflow, so a repeat event joins it\nconst WF = { vehicle: 'OtrVehicleWf01', journey: 'OtrJourneyWf01', destination: 'OtrDestinationWf01', tracking: 'OtrTrackingWf01',\n  incident: 'OtrIncidentWf01', documents: 'OtrDocumentsWf01', expenses: 'OtrExpensesWf01', general: 'OtrGeneralWf01' };\nconst ORDER = ['incident', 'vehicle', 'documents', 'destination', 'journey', 'tracking', 'expenses', 'general'];\nconst ROOT = ['vehicle', 'documents', 'destination', 'incident'];\nconst n = $('Normalize').first().json;\nconst k = $('Classify').first().json;\nconst ctx = $('Get context').first().json;\nconst YES = ctx.settings?.glide_routing ?? 0.5; // ponytail: placeholder GLiDE cut-off from the Settings page; tune on labelled events\nconst g = $('GLiDE').isExecuted && $('GLiDE').first().json.answers ? $('GLiDE').first().json : null; // a failed call counts as unavailable\nconst p = (q) => (g && g.answers && g.answers[q] ? Number(g.answers[q].noul) : null);\nconst timeline = ctx.case_timeline || [];\nconst closes = timeline.filter((t) => t.kind === 'closed').length;\nconst lastClose = Math.max(0, ...timeline.filter((t) => t.kind === 'closed').map((t) => t.id));\nconst lastRoute = timeline.filter((t) => t.kind === 'route' && t.id > lastClose).slice(-1)[0];\nconst openWfs = lastRoute ? String(lastRoute.source_ref || '').replace(/^route:/, '').split(',').filter((w) => WF[w]) : [];\n\nconst set = new Set(k.code_workflows);\nconst scores = {};\nfor (const q of ['vehicle', 'journey', 'destination', 'tracking', 'incident', 'documents', 'expenses', 'driver_cannot_continue']) {\n  scores[q] = p(q);\n  if (q !== 'driver_cannot_continue' && scores[q] !== null && scores[q] >= YES) set.add(q);\n}\nconst cannot = scores.driver_cannot_continue !== null && scores.driver_cannot_continue >= YES;\nif (set.delete('driver_availability')) set.add(cannot ? 'incident' : 'journey');\nif (cannot) set.add('incident');\nconst dropped = ROOT.some((w) => set.has(w)) && set.delete('journey');\nlet why;\nconst named = n.workflows.filter((x) => WF[x]);\nif (named.length) { set.clear(); named.forEach((x) => set.add(x)); why = 'the wake-up names its workflows'; }\nelse if (n.kind === 'follow_up') { set.clear(); (openWfs.length ? openWfs : ['general']).forEach((w) => set.add(w)); why = 'follow-up goes back to the workflows already on the case'; }\nelse if (!set.size) { set.add('general'); why = 'no problem category matched: general workflow (asks a person when unclear)'; }\nconst workflows = ORDER.filter((w) => set.has(w));\nconst joined = workflows.filter((w) => openWfs.includes(w));\nconst glideTxt = Object.entries(scores).filter(([, v]) => v !== null && v >= 0.3).map(([q, v]) => `${q} ${v.toFixed(2)}`).join(', ');\nconst route_text = `Routed to: ${workflows.join(', ')}. ` + [\n  k.codes.length && `codes: ${k.codes.join(', ')}`,\n  g && (glideTxt ? `GLiDE: ${glideTxt}` : 'GLiDE: no category'),\n  !g && n.kind !== 'follow_up' && 'GLiDE unavailable, codes only',\n  dropped && 'journey dropped: the root-cause workflow handles timing',\n  why,\n  joined.length && n.kind !== 'follow_up' && `joins the open case for ${joined.join(', ')}`,\n].filter(Boolean).join('; ') + '.';\nconst head = n.kind === 'chat' ? '[operator chat]' : n.kind === 'follow_up' ? '[follow-up from the control room]' : `[event from ${n.source}]`;\nconst items = workflows.map((w) => ({ workflow: w, workflow_id: WF[w], order_ref: n.order_ref, mode: 'main', run_id: `${n.run_id}:${w}`,\n  session_id: `case-${n.order_ref}-${w}-${closes}`,\n  input: `${head} Order ${n.order_ref}: ${n.text}\\n(Router: you are the ${w} workflow. Also on this event: ${workflows.filter((x) => x !== w).join(', ') || 'none'}.)` }));\nreturn [{ json: { order_ref: n.order_ref, workflows, route_text, items, scores } }];"
+      },
+      "id": "035975d6-a926-46ef-adaa-92cb1b2e9fb8",
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "name": "Route rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Every routing decision is on the timeline; a control-room test switch is logged next to it.\nconst r = $('Resume').first().json, n = $('Normalize').first().json;\nconst rows = [{ order_ref: r.order_ref, actor: 'router', kind: 'route', text: r.route_text, source_ref: `route:${r.workflows.join(',')}` }];\nif (n.simulate === 'driver_unreachable') rows.push({ order_ref: r.order_ref, actor: 'control room test', kind: 'test_flag', text: 'driver_unreachable', source_ref: 'simulate' });\nreturn rows.map((json) => ({ json }));"
+      },
+      "id": "2abef9dd-b3da-40e0-1b62-57844c309ab5",
+      "position": [
+        3080,
+        0
+      ]
+    },
+    {
+      "name": "Log route",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      },
+      "id": "5c471800-7223-9708-5038-0be73bfeac26",
+      "position": [
+        3300,
+        0
+      ]
+    },
+    {
+      "name": "Split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return $('Resume').first().json.items.map((json) => ({ json }));"
+      },
+      "id": "536ca5d1-41a0-85ba-9735-91cc7b6c6df8",
+      "position": [
+        3520,
+        0
+      ]
+    },
+    {
+      "name": "Run workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.workflow_id }}"
+        },
+        "mode": "each",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "input": "={{ $json.input }}",
+            "session_id": "={{ $json.session_id }}",
+            "mode": "={{ $json.mode }}",
+            "run_id": "={{ $json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "input",
+              "displayName": "input",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueRegularOutput",
+      "id": "5a901df8-6c13-9034-ed3c-b23c1d713de2",
+      "position": [
+        3740,
+        0
+      ]
+    },
+    {
+      "name": "Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// One reply for the operator: each workflow's report under its own heading.\nconst LABEL = { vehicle: 'Vehicle problems', journey: 'Journey disruptions', destination: 'Destination problems', tracking: 'Tracking problems',\n  incident: 'Incident / urgent', documents: 'Documents', expenses: 'Driver expenses', general: 'General' };\nconst items = $('Split').all().map((x) => x.json);\nconst outs = $('Run workflow').all().map((x) => x.json);\nconst parts = items.map((it, k) => `${items.length > 1 ? `### ${LABEL[it.workflow]}\\n` : ''}${String(outs[k]?.output || (outs[k]?.error ? 'Workflow failed: ' + (outs[k].error.message || outs[k].error) : '(no reply)'))}`);\nconst n = $('Normalize').first().json;\nreturn [{ json: { order_ref: n.order_ref, actor: 'agent', kind: 'run_report', text: parts.join('\\n\\n'), source_ref: `route:${items.map((x) => x.workflow).join(',')}` } }];\n// (logged at the end by Log run, after the coordinator)"
+      },
+      "id": "d87607ca-16f2-36d1-db23-6940cfa415fb",
+      "position": [
+        3960,
+        0
+      ]
+    },
+    {
+      "name": "Log run",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      },
+      "id": "5afc49b1-23fd-8b32-ceb1-29da4711ca0b",
+      "position": [
+        6820,
+        0
+      ]
+    },
+    {
+      "name": "Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{ json: { output: $('Outcome').first().json.text } }];"
+      },
+      "id": "2b26a223-15db-3209-bba5-2f9dd631c5e8",
+      "position": [
+        7040,
+        0
+      ]
+    },
+    {
+      "id": "otr-eventrow",
+      "name": "Event row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        180
+      ],
+      "parameters": {
+        "jsCode": "const n = $json;\nreturn [{ json: { order_ref: n.order_ref, actor: n.kind === 'chat' ? 'operator' : n.source, kind: 'event', text: n.text.slice(0, 2000), source_ref: `run:${n.run_id}` } }];"
+      }
+    },
+    {
+      "id": "otr-logevent",
+      "name": "Log event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "otr-resprep",
+      "name": "Resume prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "  // Re-plans resume instead of restarting: stages logged since the last close are reused, and GLiDE picks where each\n  // workflow continues from (a rejection reason, failed booking or new fact can make an earlier stage stale).\n  // GLiDE sees every event since the last close, not only the newest one. A workflow whose plan lines are still waiting\n  // for a decision may \"keep_plan\": it is not run again and the coordinator reuses those lines (only when another workflow runs).\n  // @include plan.js\n  const r = $json, n = $('Normalize').first().json, tl = $('Get context').first().json.case_timeline || [];\n  const lastClose = Math.max(0, ...tl.filter((t) => t.kind === 'closed').map((t) => t.id));\n  const lastDecision = Math.max(lastClose, ...tl.filter((t) => t.kind === 'decision').map((t) => t.id));\n  const done = {}, pending = {};\n  for (const t of tl.filter((t) => t.id > lastClose)) {\n    if (t.kind === 'stage') {\n      const [, wf, stage] = String(t.source_ref).split(':');\n      (done[wf] ||= {})[stage] = { result: String(t.text).replace(/^[^:]+:\\s*/, ''), at: t.at };\n    }\n    if (t.kind === 'plan_draft' && t.id > lastDecision) { try { pending[JSON.parse(t.text).workflow] = true; } catch (e) { /* unreadable draft */ } }\n  }\n  const events = tl.filter((t) => t.id > lastClose && ['event', 'telegram_in', 'driver_reply', 'driver_message', 'decision'].includes(t.kind))\n    .slice(-15).map((t) => `${t.at || ''} ${t.kind}: ${String(t.text).slice(0, 300)}`);\n  const ask = r.workflows.filter((x) => done[x] && STAGES[x]);\n  const canKeep = (x) => pending[x] && r.workflows.length > 1;\n  const glide_body = { model: 'fastino/GLiDE', store: false,\n    state: { new_event: n.text, event_kind: n.kind, events_since_close: events, finished_stages: Object.fromEntries(ask.map((x) => [x, done[x]])) },\n    questions: Object.fromEntries(ask.map((x) => [x, { type: 'choice',\n      instructions: `The ${x} workflow already finished the stages in finished_stages.${x}. new_event is the newest of events_since_close: a new problem, a failed booking, a rejected plan with a reason, an expired offer or an answer from a person. From which stage must the ${x} workflow continue? Pick the earliest stage whose result new_event makes wrong or stale; if no finished result is affected, pick the first unfinished stage.${canKeep(x) ? ` Pick keep_plan only if new_event changes nothing for the ${x} workflow.` : ''}`,\n      criteria: { ...STAGES[x], ...(canKeep(x) ? { keep_plan: `new_event does not touch the ${x} problem; keep its plan lines that wait for a decision` } : {}) } }])) };\n  return [{ json: { done, ask, pending, glide_body } }];"
+      }
+    },
+    {
+      "id": "otr-needres",
+      "name": "Need resume?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ask.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "GLiDE resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "id": "otr-glide-resume",
+      "position": [
+        2640,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "otr-resume",
+      "name": "Resume",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Each agent input lists its finished stages and where to continue. Low GLiDE confidence: first unfinished stage (else the last).\n// @include plan.js\nconst r = $('Route').first().json, p = $('Resume prep').first().json, n = $('Normalize').first().json, ctx = $('Get context').first().json;\nconst CUT = ctx.settings?.glide_resume ?? 0.4; // ponytail: placeholder cut-off from the Settings page\nconst g = $('GLiDE resume').isExecuted ? $('GLiDE resume').first().json.answers || {} : {};\nconst resume = {}, kept = [];\nlet items = r.items.map((it) => {\n  const d = p.done[it.workflow];\n  if (!d) return it;\n  const names = Object.keys(STAGES[it.workflow]), a = g[it.workflow];\n  if (a && a.choice === 'keep_plan' && p.pending[it.workflow] && Number(a.confidence) >= CUT) { kept.push(it.workflow); resume[it.workflow] = `keeps its waiting plan lines (GLiDE ${Number(a.confidence).toFixed(2)})`; return null; }\n  const trusted = a && names.includes(a.choice) && Number(a.confidence) >= CUT;\n  const from = trusted ? a.choice : names.find((s) => !d[s]) || names[names.length - 1];\n  resume[it.workflow] = `${from} (${trusted ? 'GLiDE ' + Number(a.confidence).toFixed(2) : 'first unfinished stage'})`;\n  const keep = names.slice(0, names.indexOf(from)).filter((s) => d[s]).map((s) => `${s}: ${d[s].result}`);\n  return { ...it, input: `${it.input}\\nFinished stages (reuse these results, do not ask again): ${keep.join('; ') || 'none'}.\\nContinue from stage: ${from}.` };\n});\n// Every workflow kept: the first one runs anyway (something new happened, so one plan must look at it).\nif (!items.some(Boolean)) { const k = kept.shift(); delete resume[k]; items = r.items.map((it) => (it.workflow === k ? it : null)); }\nitems = items.filter(Boolean);\n// Safety line: an incident on a new event gets the 112 message to the driver at once, once per open case.\nconst tl = ctx.case_timeline || [], lastClose = Math.max(0, ...tl.filter((t) => t.kind === 'closed').map((t) => t.id));\nconst sentSafety = tl.some((t) => t.id > lastClose && t.kind === 'driver_message' && String(t.text).includes('call 112'));\nconst safety_line = r.workflows.includes('incident') && n.kind !== 'follow_up' && !n.workflows.length && !sentSafety;\nconst resumeTxt = Object.entries(resume).map(([x, s]) => (kept.includes(x) ? `${x} ${s}` : `${x} from ${s}`)).join(', ');\nreturn [{ json: { ...r, items, kept, resume, safety_line, route_text: r.route_text + (resumeTxt ? ` Resume: ${resumeTxt}.` : '') + (safety_line ? ' 112 safety line sent to the driver.' : '') } }];"
+      }
+    },
+    {
+      "id": "otr-safety",
+      "name": "Safety line?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.safety_line }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "otr-112",
+      "name": "112 line",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3300,
+        180
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "v6W1UGVTeY4T6vFI"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "recipient_type": "driver",
+            "text": "Bahn safety: if anyone is hurt or in danger, call 112 now and get to a safe place away from traffic. Then tell us you are safe."
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "recipient_type",
+              "displayName": "recipient_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "otr-coordrow",
+      "name": "Coord row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Marks \"this run is merging now\", written before the context is read: an older run still finishing leaves its drafts to us.\nconst n = $('Normalize').first().json;\nreturn [{ json: { order_ref: n.order_ref, actor: 'router', kind: 'coord', text: 'Merging the drafts of this event into one plan.', source_ref: `run:${n.run_id}` } }];"
+      }
+    },
+    {
+      "id": "otr-logcoord",
+      "name": "Log coord",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4400,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10kfbsSMe2AIs1CT"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "otr-ctxafter",
+      "name": "Context after",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4620,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Normalize').first().json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "otr-coord",
+      "name": "Coordinate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// One plan per order. Skip when a newer event is still being worked on (that run merges our drafts too).\n// Live drafts = plan_draft rows since the last close and the last plan decision, latest per workflow; file only if this run added one.\n// @include plan.js\nconst n = $('Normalize').first().json, tl = $json.case_timeline || [];\nconst lastClose = Math.max(0, ...tl.filter((t) => t.kind === 'closed').map((t) => t.id));\nconst mine = tl.find((t) => t.kind === 'event' && t.source_ref === `run:${n.run_id}`);\nconst newer = tl.filter((t) => t.kind === 'event' && mine && t.id > mine.id && !tl.some((c) => c.kind === 'coord' && c.source_ref === t.source_ref));\nif (newer.length) return [{ json: { file: false, note: `Merged into the newer run on event #${newer[0].id}; that run files the plan.` } }];\nconst from = Math.max(lastClose, ...tl.filter((t) => t.kind === 'decision').map((t) => t.id));\nconst latest = {};\nfor (const t of tl.filter((t) => t.kind === 'plan_draft' && t.id > from)) {\n  try { const d = JSON.parse(t.text); latest[d.workflow] = { ...d, run: t.source_ref }; } catch (e) { /* unreadable draft skipped */ }\n}\nconst drafts = Object.values(latest);\nif (!drafts.some((d) => d.run.startsWith(`run:${n.run_id}:`))) return [{ json: { file: false, note: '' } }];\nconst m = mergeDrafts(drafts);\nreturn [{ json: { file: true, workflows: drafts.map((d) => d.workflow), merged: m, lines: JSON.stringify(m.lines),\n  rationale: m.rationale.join(' | '), evidence_refs: [...new Set(m.evidence.join(',').split(',').map((x) => x.trim()).filter(Boolean))].join(','), ready_at: m.ready_at } }];"
+      }
+    },
+    {
+      "id": "otr-hasplan",
+      "name": "Has plan?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5060,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.file === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "otr-preview",
+      "name": "Preview",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5280,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrProposePlanWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Normalize').first().json.order_ref }}",
+            "lines": "={{ $json.lines }}",
+            "customer_message": "",
+            "rationale": "={{ $json.rationale }}",
+            "evidence_refs": "={{ $json.evidence_refs }}",
+            "ready_at": "={{ $json.ready_at }}",
+            "mode": "preview",
+            "delivery_contact_message": "",
+            "run_id": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "lines",
+              "displayName": "lines",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "customer_message",
+              "displayName": "customer_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "rationale",
+              "displayName": "rationale",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "evidence_refs",
+              "displayName": "evidence_refs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ready_at",
+              "displayName": "ready_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "delivery_contact_message",
+              "displayName": "delivery_contact_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "otr-prevok",
+      "name": "Preview ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5500,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "otr-wprompt",
+      "name": "Writer prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5720,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// One writer call: the workflows' drafts become one buyer message, one delivery-contact message and one driver note.\n// Facts come only from the checked plan preview (prices, arrival times in the buyer's local time, offer deadline).\nconst p = $json, k = $('Coordinate').first().json, m = k.merged, plan = p.plan;\nconst need = { buyer: plan.needs_buyer || m.customer.length > 0, contact: Boolean(p.delivery_contact?.name) && (m.contact.length > 0 || plan.steps.some((x) => x.kind === 'change_delivery_window') || plan.options.some((o) => o.steps.some((x) => x.kind === 'change_delivery_window'))) };\nconst prompt = `You write messages for Bahn Express, a company that delivers cars by driving them. A Bahn employee reads and approves every message before it is sent.\nUse ONLY the facts below. Never invent a time, price, place or promise. Times for the buyer and the delivery contact are in their local time as written below. Plain, short, polite English.\n\nPLAN (checked by code): ${p.summary}\nCurrent delivery window: ${p.window_was || 'not set'}\nOptions for the buyer: ${plan.options.length ? plan.options.map((o) => `${o.key} (${o.names.join('/')}): arrives ${o.arrives_local}, ${o.on_time === false || o.late_hours > 0 ? o.late_hours + ' h later than the earliest' : 'earliest'}, total EUR ${o.total_eur}`).join('; ') + (plan.recommended ? `. Recommended: ${plan.recommended}` : '') : 'none'}\nOffer valid until: ${plan.valid_until_local || 'not set yet (the system adds the reply-by line when the offer is sent; do not mention any deadline)'}\nPlan lines: ${plan.steps.map((x) => `${x.kind}: ${x.detail}`).join(' | ')}\nBuyer: ${p.buyer}. Delivery contact: ${p.delivery_contact ? `${p.delivery_contact.name} (${p.delivery_contact.role || 'delivery place'})` : 'none'}\nDrafts from the workflows (merge them, drop repeats): buyer: ${m.customer.join(' /// ') || 'none'}; delivery contact: ${m.contact.join(' /// ') || 'none'}; driver notes: ${m.lines.filter((l) => l.kind === 'notify_driver').map((l) => l.detail).join(' /// ') || 'none'}\n\nWrite:\n- customer_message: ${need.buyer ? 'to the buyer: what happened in one sentence, then each option with its letter, local arrival time and total price, which one we recommend, and the offer deadline; ask them to reply with the letter. If there are no options, ask the question from the drafts.' : 'empty string (the buyer needs no message)'}\n- delivery_contact_message: ${need.contact ? 'to the delivery contact: the new expected arrival in their local time, asking them to confirm they can receive the car then. If there are options, say the final time follows once the buyer has chosen.' : 'empty string'}\n- driver_note: the instruction for the driver, sent only after the plan is approved (and the buyer has chosen, when there are options). Facts and actions only, one or two sentences. Empty string if the driver needs nothing.\n\nAnswer with JSON only: {\"customer_message\": \"...\", \"delivery_contact_message\": \"...\", \"driver_note\": \"...\"}`;\nreturn [{ json: { prompt, need } }];"
+      }
+    },
+    {
+      "id": "otr-writer",
+      "name": "Writer",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        5940,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "name": "Writer model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4096
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      },
+      "position": [
+        5940,
+        220
+      ],
+      "id": "otr-writer-lm"
+    },
+    {
+      "id": "otr-wresult",
+      "name": "Writer result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Parse the writer's JSON; if it fails, the workflows' own drafts are used as they are.\nconst k = $('Coordinate').first().json, m = k.merged, need = $('Writer prompt').first().json.need;\nlet o = {};\ntry { o = JSON.parse(String($json.text || '').replace(/^[^{]*/, '').replace(/[^}]*$/, '')); } catch (e) { o = {}; }\nconst pick = (v, fallback) => (typeof v === 'string' && v.trim() ? v.trim() : fallback);\nconst customer = need.buyer ? pick(o.customer_message, m.customer.join('\\n\\n')) : '';\nconst contact = need.contact ? pick(o.delivery_contact_message, m.contact.join('\\n\\n')) : '';\nconst driver = pick(o.driver_note, '');\nconst lines = m.lines.filter((l) => l.kind !== 'notify_driver' && l.kind !== 'customer_message' && l.kind !== 'delivery_contact_message');\nif (driver) lines.push({ kind: 'notify_driver', detail: driver });\nelse lines.push(...m.lines.filter((l) => l.kind === 'notify_driver'));\n  // Fact check by code: every time (HH:MM) and EUR amount in the messages must appear in the plan facts the writer got.\n  const facts = $('Writer prompt').first().json.prompt.split('Drafts from the workflows')[0];\n  const num = (x) => Number(String(x).replace(/[^\\d.,]/g, '').replace(/[.,]+$/, '').replace(/,(\\d{3})/g, '$1').replace(',', '.'));\n  const factNums = new Set((facts.match(/\\d[\\d,.]*/g) || []).map(num));\n  const factTimes = new Set((facts.match(/(?<!\\d)\\d{1,2}[:.]\\d{2}(?!\\d)/g) || []).map((t) => t.replace('.', ':').padStart(5, '0')));\n  const said = [customer, contact, driver].join('\\n');\n  const badTimes = (said.match(/(?<!\\d)\\d{1,2}[:.]\\d{2}(?!\\d)/g) || []).filter((t) => !factTimes.has(t.replace('.', ':').padStart(5, '0')));\n  const badEur = (said.match(/(?:EUR|€)\\s?\\d[\\d,.]*|\\d[\\d,.]*\\s?(?:EUR|€)/g) || []).filter((x) => !factNums.has(num(x)));\n  const code_problems = [...badTimes.map((t) => `time ${t}`), ...badEur.map((x) => `amount ${x}`)];\n  const glide_body = { model: 'fastino/GLiDE', store: false, state: { facts: facts.replace(/^[\\s\\S]*?(?=PLAN \\(checked by code\\))/, ''), messages: `To buyer: ${customer || '(none)'}\\nTo delivery contact: ${contact || '(none)'}\\nTo driver: ${driver || '(none)'}` },\n    questions: { grounded: { type: 'noul', instructions: 'Is every time, date, price, place and promise in messages backed by facts (nothing invented, nothing changed)?', criteria: { true: 'Everything is in the facts', false: 'Something is not in the facts' } } } };\nreturn [{ json: { code_problems, glide_body, lines: JSON.stringify(lines), customer_message: customer, delivery_contact_message: contact, wrote: Boolean(o.customer_message || o.driver_note) } }];"
+      }
+    },
+    {
+      "id": "otr-file",
+      "name": "File plan",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6380,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrProposePlanWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Normalize').first().json.order_ref }}",
+            "lines": "={{ $json.lines }}",
+            "customer_message": "={{ $json.customer_message }}",
+            "rationale": "={{ $('Coordinate').first().json.rationale + ($('Checked').first().json.fact_note ? ' | ' + $('Checked').first().json.fact_note : '') }}",
+            "evidence_refs": "={{ $('Coordinate').first().json.evidence_refs }}",
+            "ready_at": "={{ $('Coordinate').first().json.ready_at }}",
+            "mode": "file",
+            "delivery_contact_message": "={{ $json.delivery_contact_message }}",
+            "run_id": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "lines",
+              "displayName": "lines",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "customer_message",
+              "displayName": "customer_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "rationale",
+              "displayName": "rationale",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "evidence_refs",
+              "displayName": "evidence_refs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ready_at",
+              "displayName": "ready_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "delivery_contact_message",
+              "displayName": "delivery_contact_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "otr-outcome",
+      "name": "Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The run report (one heading per workflow) plus what the coordinator did; logged last so the control room shows it.\nconst r = $('Collect').first().json, k = $('Coordinate').first().json;\nconst ran = (x) => $(x).isExecuted ? $(x).first().json : null;\nconst pre = ran('Preview'), filed = ran('File plan');\nconst line = !k.file ? k.note\n  : pre && !pre.ok ? `Combined plan NOT filed (${k.workflows.join(' + ')}): ${pre.error}`\n  : filed && filed.created ? `One plan filed for a person (${k.workflows.join(' + ')}): proposal #${filed.proposal_id}${filed.replaced?.length ? `, replaces #${filed.replaced.join(', #')}` : ''}. ${pre.summary}`\n  : `Combined plan NOT filed (${k.workflows.join(' + ')}): ${filed?.error || 'no answer from propose_plan'}`;\nreturn [{ json: { ...r, text: r.text + (line ? `\\n\\n### Plan\\n${line}` : '') } }];"
+      }
+    },
+    {
+      "id": "factcheck",
+      "name": "Fact check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6270,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VtTRH9NSbaI7ARnO",
+          "name": "BAHN Fastino"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fastino.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.glide_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "checked",
+      "name": "Checked",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6380,
+        200
+      ],
+      "parameters": {
+        "jsCode": "  // Staff see a warning on the plan when a time or price in a message is not in the plan facts. The person still decides.\n  const wr = $('Writer result').first().json, S = $('Context after').first().json.settings || {};\n  const g = $json.answers?.grounded, cut = Number(S.glide_grounding ?? 0.05);\n  const problems = [...wr.code_problems];\n  if (g && Number(g.noul) < cut) problems.push(`GLiDE ${Number(g.noul).toFixed(2)} says something is not in the plan facts`);\n  const { glide_body, code_problems, ...rest } = wr;\n  return [{ json: { ...rest, fact_note: problems.length ? `Fact check warning - check the messages: ${problems.join('; ')}` : '' } }];"
+      }
+    },
+    {
+      "id": "driverstatus",
+      "name": "Driver status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6600,
+        200
+      ],
+      "parameters": {
+        "jsCode": "  // The driver hears that a plan is being decided and keeps to the current one (a status, not a new instruction).\n  const f = $json;\n  if (!f.created) return [];\n  return [{ json: { order_ref: $('Normalize').first().json.order_ref, text: 'Bahn is deciding on a change for this delivery. Keep to your current plan until we confirm.' } }];"
+      }
+    },
+    {
+      "id": "driverstatussend",
+      "name": "Send driver status",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6820,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrTgSendWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}",
+            "role": "driver",
+            "text": "={{ $json.text }}",
+            "proposal_id": "",
+            "kind": "driver_status",
+            "buttons": "[]",
+            "reply_to": "",
+            "from_sim": "false"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reply_to",
+              "displayName": "reply_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_sim",
+              "displayName": "from_sim",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Event webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operator chat": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Has order?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has order?": {
+      "main": [
+        [
+          {
+            "node": "Event row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get context": {
+      "main": [
+        [
+          {
+            "node": "Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify": {
+      "main": [
+        [
+          {
+            "node": "Need GLiDE?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need GLiDE?": {
+      "main": [
+        [
+          {
+            "node": "GLiDE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GLiDE": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Resume prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route rows": {
+      "main": [
+        [
+          {
+            "node": "Log route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log route": {
+      "main": [
+        [
+          {
+            "node": "Split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split": {
+      "main": [
+        [
+          {
+            "node": "Run workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run workflow": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect": {
+      "main": [
+        [
+          {
+            "node": "Coord row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log run": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event row": {
+      "main": [
+        [
+          {
+            "node": "Log event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log event": {
+      "main": [
+        [
+          {
+            "node": "Get context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume prep": {
+      "main": [
+        [
+          {
+            "node": "Need resume?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need resume?": {
+      "main": [
+        [
+          {
+            "node": "GLiDE resume",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GLiDE resume": {
+      "main": [
+        [
+          {
+            "node": "Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume": {
+      "main": [
+        [
+          {
+            "node": "Safety line?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safety line?": {
+      "main": [
+        [
+          {
+            "node": "112 line",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coord row": {
+      "main": [
+        [
+          {
+            "node": "Log coord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log coord": {
+      "main": [
+        [
+          {
+            "node": "Context after",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context after": {
+      "main": [
+        [
+          {
+            "node": "Coordinate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coordinate": {
+      "main": [
+        [
+          {
+            "node": "Has plan?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has plan?": {
+      "main": [
+        [
+          {
+            "node": "Preview",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview": {
+      "main": [
+        [
+          {
+            "node": "Preview ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview ok?": {
+      "main": [
+        [
+          {
+            "node": "Writer prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Writer prompt": {
+      "main": [
+        [
+          {
+            "node": "Writer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Writer model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Writer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Writer": {
+      "main": [
+        [
+          {
+            "node": "Writer result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Writer result": {
+      "main": [
+        [
+          {
+            "node": "Fact check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File plan": {
+      "main": [
+        [
+          {
+            "node": "Outcome",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Driver status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome": {
+      "main": [
+        [
+          {
+            "node": "Log run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fact check": {
+      "main": [
+        [
+          {
+            "node": "Checked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checked": {
+      "main": [
+        [
+          {
+            "node": "File plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Driver status": {
+      "main": [
+        [
+          {
+            "node": "Send driver status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "112 line": {
+      "main": [
+        [
+          {
+            "node": "Route rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

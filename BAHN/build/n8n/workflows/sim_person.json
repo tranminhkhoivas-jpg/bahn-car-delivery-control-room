@@ -1,0 +1,307 @@
+{
+  "id": "OtrSimPersonWf01",
+  "name": "BAHN tool · sim_person",
+  "nodes": [
+    {
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "role",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "tg_message_id",
+              "type": "string"
+            },
+            {
+              "name": "proposal_id",
+              "type": "string"
+            },
+            {
+              "name": "buttons",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ctx",
+      "name": "Context",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "A8MTWlClXgMKbxXi"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "set",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "prompt",
+      "name": "Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Test behaviour from the Settings page (sim_person_behaviour): answer (AI picks), fastest, cheapest, balanced, decline, unclear, silent.\nconst snap = (() => { try { const r = $('Context').first().json; return typeof r.context === 'string' ? JSON.parse(r.context) : (r.context || {}); } catch { return {}; } })();\nconst NAMES = { buyer: snap.customer?.name || 'the buyer', delivery_contact: snap.delivery_contact?.name || 'the delivery contact', driver: (snap.assignments || []).find((a) => a.driver)?.driver || 'the driver', staff: 'Bahn staff' };\nconst ROLE = { buyer: 'Buyer', delivery_contact: 'Delivery contact', driver: 'Driver', staff: 'Staff' };\nconst i = $('Start').first().json, role = i.role;\nconst S = Object.fromEntries($('Settings').all().map((r) => [r.json.key, r.json.value]));\nconst mode = String(S.sim_person_behaviour || 'answer').trim();\nif (mode === 'silent') return [];\nlet buttons = []; try { buttons = JSON.parse(i.buttons || '[]'); } catch {}\nconst pick = ['fastest', 'cheapest', 'balanced'].includes(mode) ? buttons.find((b) => String(b.label).toLowerCase().includes(mode))?.key : mode === 'decline' ? 'decline' : '';\nconst facts = { order: i.order_ref, you: { role, name: NAMES[role] }, car: snap.vehicle || snap.order?.vehicle, delivery: snap.delivery_window || snap.order?.delivery_window, delivery_contact: snap.delivery_contact, buyer: snap.customer?.name };\nconst prompt = `You play ${NAMES[role]}, the ${role === 'buyer' ? 'buyer (paying customer)' : 'person receiving the car at the delivery address'} of a car delivery by Bahn Express, in a test. FACTS (only use these): ${JSON.stringify(facts).slice(0, 2500)}\nBahn Express just wrote to you:\n\"\"\"${i.text}\"\"\"\n${buttons.length ? `You can tap one of these buttons: ${buttons.map((b) => `${b.key} = ${b.label}`).join('; ')}.` : ''}\n${pick ? `You choose ${pick === 'decline' ? 'to decline' : 'button ' + pick}.` : mode === 'unclear' ? 'Answer vaguely: do not choose anything clearly, ask something unrelated or hesitate.' : buttons.length ? 'Choose what a real person in your role would most likely choose.' : 'Answer naturally; confirm if the message asks you to confirm and nothing in the FACTS is against it.'}\nReply in 1-2 short sentences in English. Answer ONLY with JSON: {\"text\": \"<your reply>\", \"choice\": \"<button key you tap, or empty>\"}`;\nreturn [{ json: { prompt, pick, mode, buttons, name: NAMES[role] } }];"
+      }
+    },
+    {
+      "id": "reply",
+      "name": "Person reply",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        880,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "reply-lm",
+      "name": "Person model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        0,
+        220
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 2048
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      }
+    },
+    {
+      "id": "parse",
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Prompt').first().json, i = $('Start').first().json;\nlet out = {}; try { out = JSON.parse(String($json.text || '').match(/\\{[\\s\\S]*\\}/)[0]); } catch { out = { text: String($json.text || '').trim() }; }\nif (!out.text) return [];\nconst keys = p.buttons.map((b) => String(b.key));\nlet choice = p.mode === 'unclear' ? '' : String(p.pick || out.choice || '').trim();\nif (!keys.includes(choice)) choice = '';\nconst label = choice ? `[taps ${p.buttons.find((b) => String(b.key) === choice).label}] ` : '';\nreturn [{ json: { text: label + out.text, plain: out.text, choice, update: { kind: choice ? 'callback' : 'message', text: out.text, data: choice ? `a:${i.proposal_id}:${choice}` : '',\n  reply_to_tg_id: String(i.tg_message_id), from_name: `${p.name} (simulated)`, sim: true } } }];"
+      }
+    },
+    {
+      "id": "post",
+      "name": "Post as person",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_SIM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_DEMO_CHAT_ID, text: ({ buyer: 'Buyer', delivery_contact: 'Delivery contact' }[$('Start').first().json.role]) + ', ' + $('Prompt').first().json.name + ' (' + $('Start').first().json.order_ref + '):\\n' + $json.text, reply_parameters: { message_id: Number($('Start').first().json.tg_message_id) || 0, allow_sending_without_reply: true } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "hand",
+      "name": "Hand to inbound",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:5678/webhook/bahn/tg-in",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Parse').first().json.update) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt": {
+      "main": [
+        [
+          {
+            "node": "Person reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Person reply": {
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse": {
+      "main": [
+        [
+          {
+            "node": "Post as person",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post as person": {
+      "main": [
+        [
+          {
+            "node": "Hand to inbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Person model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Person reply",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

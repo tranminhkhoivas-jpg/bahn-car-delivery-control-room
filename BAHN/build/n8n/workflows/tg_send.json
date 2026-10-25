@@ -1,0 +1,688 @@
+{
+  "id": "OtrTgSendWf01",
+  "name": "BAHN tool · tg_send",
+  "nodes": [
+    {
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "role",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "proposal_id",
+              "type": "string"
+            },
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "buttons",
+              "type": "string"
+            },
+            {
+              "name": "reply_to",
+              "type": "string"
+            },
+            {
+              "name": "from_sim",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ctx",
+      "name": "Context",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "A8MTWlClXgMKbxXi"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "={{ $('Start').first().json.order_ref }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "prep",
+      "name": "Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Every Telegram message goes through here. Bahn bot: messages to people (labelled who they are for, since the demo\n// shares one group). Simulated people bot (from_sim): the simulated person's reply, labelled who is speaking.\nconst snap = (() => { try { const r = $('Context').first().json; return typeof r.context === 'string' ? JSON.parse(r.context) : (r.context || {}); } catch { return {}; } })();\nconst NAMES = { buyer: snap.customer?.name || 'the buyer', delivery_contact: snap.delivery_contact?.name || 'the delivery contact', driver: (snap.assignments || []).find((a) => a.driver)?.driver || 'the driver', staff: 'Bahn staff' };\nconst ROLE = { buyer: 'Buyer', delivery_contact: 'Delivery contact', driver: 'Driver', staff: 'Staff' };\nconst i = $('Start').first().json;\nconst role = String(i.role || '').trim(), sim = String(i.from_sim) === 'true', ref = String(i.order_ref || '').trim().toUpperCase();\nlet buttons = []; try { buttons = JSON.parse(i.buttons || '[]'); } catch {}\nconst head = sim ? `${ROLE[role] || role}, ${NAMES[role] || role} (${ref}):` : role === 'staff' ? `Staff task (${ref}):` : `To ${(ROLE[role] || role).toLowerCase()} ${NAMES[role] || ''} (${ref}):`;\nconst L = $('Language').first().json;\nlet said = ''; try { said = L.need ? String($('Translate').first().json.text || '').trim() : ''; } catch {} // translation failed: English only\nconst text = said ? `${said}\\n\\n(English: ${String(i.text || '').trim()})` : String(i.text || '').trim();\nconst body = { text: `${head}\\n${text}`.slice(0, 4000) };\nif (buttons.length) body.reply_markup = { inline_keyboard: buttons.map((b) => [{ text: String(b.label).slice(0, 60), callback_data: `a:${i.proposal_id}:${b.key}`.slice(0, 64) }]) };\nif (String(i.reply_to || '').trim()) body.reply_parameters = { message_id: Number(i.reply_to), allow_sending_without_reply: true }; // bots cannot see each other, so a sim reply may not thread\nreturn [{ json: { sim, staff: role === 'staff', body, role, ref, buttons, text, language: said ? L.code : 'en' } }];"
+      }
+    },
+    {
+      "id": "send",
+      "name": "Send",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $json.sim ? $env.TELEGRAM_SIM_BOT_TOKEN : $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ...$json.body, chat_id: $json.staff ? $env.TELEGRAM_STAFF_CHAT_ID : $env.TELEGRAM_DEMO_CHAT_ID }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "row",
+      "name": "Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Prep').first().json, i = $('Start').first().json, r = $json;\nconst ok = r.ok === true;\nreturn [{ json: { order_ref: p.ref, direction: p.sim ? 'in' : 'out', person_key: `${p.role}:${p.ref}`, role: p.role, chat_id: String(r.result?.chat?.id || ''),\n  tg_message_id: String(r.result?.message_id || ''), reply_to_tg_id: String(i.reply_to || ''), proposal_id: String(i.proposal_id || ''), kind: String(i.kind || ''),\n  text: String(p.text ?? i.text ?? ''), buttons: JSON.stringify(p.buttons), status: ok ? 'sent' : `failed: ${r.description || r.error?.message || 'no answer'}`.slice(0, 300) } }];"
+      }
+    },
+    {
+      "id": "log",
+      "name": "Log message",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "MessagesTable001"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "simq",
+      "name": "Simulate reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !$('Prep').first().json.sim && ['buyer','delivery_contact'].includes($('Prep').first().json.role) && $('Row').first().json.status === 'sent' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "simp",
+      "name": "Simulated person",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2420,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrSimPersonWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $('Row').first().json.order_ref }}",
+            "role": "={{ $('Row').first().json.role }}",
+            "text": "={{ $('Row').first().json.text }}",
+            "tg_message_id": "={{ $('Row').first().json.tg_message_id }}",
+            "proposal_id": "={{ $('Row').first().json.proposal_id }}",
+            "buttons": "={{ $('Row').first().json.buttons }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "tg_message_id",
+              "displayName": "tg_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "proposal_id",
+              "displayName": "proposal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "buttons",
+              "displayName": "buttons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "ret",
+      "name": "Return",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const r = $('Row').first().json;\nreturn [{ json: { sent: r.status === 'sent', status: r.status, tg_message_id: r.tg_message_id } }];"
+      }
+    },
+    {
+      "id": "expq",
+      "name": "Expect answer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Row').first().json.status === 'sent' && $('Row').first().json.direction === 'out' && ($('Row').first().json.role === 'delivery_contact' || ($('Row').first().json.role === 'buyer' && $('Row').first().json.buttons !== '[]') || ($('Row').first().json.role === 'driver' && $('Row').first().json.kind === 'driver_message')) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wrow",
+      "name": "Wait row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Someone must answer this message: otr_reminders follows it up. Times are real ISO; the reminder check converts with the demo clock speed.\nconst r = $('Row').first().json;\nreturn [{ json: { order_ref: r.order_ref, who: r.role, person_key: r.person_key, about: r.kind, ref: r.proposal_id, workflow: '', since: new Date().toISOString(), reminders: '0', state: 'open', valid_until: '', last_reminded: '' } }];"
+      }
+    },
+    {
+      "id": "owait",
+      "name": "Open wait",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "WaitsTable000001"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": null
+        }
+      }
+    },
+    {
+      "id": "set",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "lang",
+      "name": "Language",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Buyer and delivery-contact messages go out in the person's language when setting reply_in_customer_language is on.\n// The employee approved the English text; Haiku translates it here and the English stays below the translation.\nconst S = Object.fromEntries($('Settings').all().map((r) => [r.json.key, r.json.value]));\nconst snap = (() => { try { const r = $('Context').first().json; return typeof r.context === 'string' ? JSON.parse(r.context) : (r.context || {}); } catch { return {}; } })();\nconst i = $('Start').first().json, role = String(i.role || '').trim();\nconst code = String((role === 'buyer' ? snap.customer?.language : snap.delivery_contact?.language) || 'en').toLowerCase().slice(0, 2);\nconst NAME = { de: 'German', fr: 'French', fi: 'Finnish', sv: 'Swedish', et: 'Estonian', pl: 'Polish', nl: 'Dutch', it: 'Italian', es: 'Spanish' };\nconst need = String(S.reply_in_customer_language).toLowerCase() === 'on' && String(i.from_sim) !== 'true' && ['buyer', 'delivery_contact'].includes(role) && code !== 'en' && !!String(i.text || '').trim();\nconst language = NAME[code] || code; // ponytail: short name map, the model also understands a bare code\nreturn [{ json: { need, code, language, prompt: `Translate this customer message from Bahn Express into ${language}. Keep names, dates, times, prices, booking refs and option letters exactly as written. Reply with the translation only.\\n\\n${String(i.text || '').trim()}` } }];"
+      }
+    },
+    {
+      "id": "tr-if",
+      "name": "Translate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "t1",
+              "leftValue": "={{ $json.need }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "translate",
+      "name": "Translate",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "translate-lm",
+      "name": "Translate model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        220
+      ],
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0,
+          "maxTokens": 2048
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep": {
+      "main": [
+        [
+          {
+            "node": "Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send": {
+      "main": [
+        [
+          {
+            "node": "Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row": {
+      "main": [
+        [
+          {
+            "node": "Log message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log message": {
+      "main": [
+        [
+          {
+            "node": "Expect answer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate reply?": {
+      "main": [
+        [
+          {
+            "node": "Simulated person",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulated person": {
+      "main": [
+        [
+          {
+            "node": "Return",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expect answer?": {
+      "main": [
+        [
+          {
+            "node": "Wait row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Simulate reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait row": {
+      "main": [
+        [
+          {
+            "node": "Open wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open wait": {
+      "main": [
+        [
+          {
+            "node": "Simulate reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Language",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Language": {
+      "main": [
+        [
+          {
+            "node": "Translate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate?": {
+      "main": [
+        [
+          {
+            "node": "Translate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate": {
+      "main": [
+        [
+          {
+            "node": "Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Translate",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

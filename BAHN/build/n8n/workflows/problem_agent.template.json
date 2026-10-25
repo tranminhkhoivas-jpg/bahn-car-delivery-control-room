@@ -1,0 +1,1110 @@
+{
+  "name": "BAHN agent · {{LABEL}}",
+  "id": "OtrTemplateWf01",
+  "nodes": [
+    {
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "input",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "mode",
+              "type": "string"
+            },
+            {
+              "name": "run_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "eddeaa36-66c0-dd45-faa1-1e49ef2af7c3",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ ($json.mode === 'sub' ? '[called by another workflow: DRAFT mode, do not file] Order ' + $json.order_ref + ': ' : '') + $json.input }}",
+        "options": {
+          "maxIterations": 20,
+          "systemMessage": "={{ $json.system }}"
+        }
+      },
+      "id": "3ecc22e6-c3db-d2b6-03e0-ed9e74187109",
+      "position": [
+        660,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "name": "Return",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{ json: { output: $json.output, prompt_version: $('Prompt').first().json.prompt_version } }];"
+      },
+      "id": "81b05ca0-7153-0117-fe2a-ca31a19221dc",
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "name": "Claude Haiku 5.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "parameters": {
+        "model": "anthropic/claude-haiku-5.5",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4096
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "id": "HUqgy3AT7tyoG0PB",
+          "name": "BAHN OpenRouter"
+        }
+      },
+      "position": [
+        640,
+        500
+      ],
+      "id": "0d6751e8-d699-b245-d1ee-1063b58906e7"
+    },
+    {
+      "name": "Case memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        840,
+        500
+      ],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Start').first().json.session_id }}",
+        "contextWindowLength": 20
+      },
+      "id": "6fe8492e-8660-aab9-6d3f-cef5c347998a"
+    },
+    {
+      "name": "get_order_context",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Load everything known about one order: dataset snapshot (order, vehicle, driver, alerts, incidents, messages, tracking, travel options/bookings, time windows) plus the live case timeline and proposals. Call first.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', 'Order reference like CD-420322', 'string') }}",
+            "view": "agent"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "view",
+              "displayName": "view",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        440,
+        300
+      ],
+      "id": "fa87edc6-865e-1b5e-41e6-3d5c086d4985"
+    },
+    {
+      "name": "message_driver",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Send a short chat message to the order's driver (recipient_type 'driver') or pickup site ('pickup_site') and get the reply. Logged on the case timeline. Refuses customers.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "v6W1UGVTeY4T6vFI"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', 'Order reference like CD-420322', 'string') }}",
+            "recipient_type": "={{ $fromAI('recipient_type', \"'driver' or 'pickup_site'\", 'string') }}",
+            "text": "={{ $fromAI('text', 'The message, one short question', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "recipient_type",
+              "displayName": "recipient_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        600,
+        300
+      ],
+      "id": "d14825f0-9c81-6cf2-f8dd-5f1be4d5a6cc"
+    },
+    {
+      "name": "check_journey",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Journey check by code (no AI). Is the tracking gap normal (ferry crossing, hotel stop, before pickup, 45 min or less)? Last known position (nearest city, estimate). Road arrival estimate against the delivery window: 75 km/h plus EU breaks and rest. Returns verdict on_time / at_risk / late and suggested_new_window when late. Read-only.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrCheckJourneyWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420322\", 'string') }}",
+            "from_time": "={{ $fromAI('from_time', \"ISO UTC time the car can move again (after rest or repair), or '' for now\", 'string') }}",
+            "km_left": "={{ $fromAI('km_left', \"km left if the driver gave a distance, else ''\", 'string') }}",
+            "drive_used_min": "={{ $fromAI('drive_used_min', \"Minutes the driver already worked today (a replacement's drive_used_min from plan_driver_travel), '' if fresh\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_time",
+              "displayName": "from_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "km_left",
+              "displayName": "km_left",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "drive_used_min",
+              "displayName": "drive_used_min",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        760,
+        300
+      ],
+      "id": "497d5f58-8f7f-b7f7-57dd-a4b7cdc0137b"
+    },
+    {
+      "name": "plan_rebooking",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Search ferry options for this order and rank them by code: on time first, then total cost (ticket + hotel), then driver convenience. Returns the recommended option_id and numbers. Uses dataset quotes plus simulated (mock_generated) sailings. Read-only.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "PlanRebookingWf1"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420299\", 'string') }}",
+            "ready_at": "={{ $fromAI('ready_at', \"ISO time the car can leave toward the terminal, only if the driver or timeline gave one; else ''\", 'string') }}",
+            "days": "={{ $fromAI('days', \"Days to search ahead, '' for default 4\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ready_at",
+              "displayName": "ready_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "days",
+              "displayName": "days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        920,
+        300
+      ],
+      "id": "5eaf5fe4-19ab-b717-c6a4-f8bf447dfef7"
+    },
+    {
+      "name": "plan_driver_travel",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Train and flight planning for drivers, by code. purpose 'replacement': up to 3 free drivers nearest the handover city, each with their best train or flight there. 'driver_return': the current driver's trip home. 'positioning': from_city to to_city. Ranked by earliest arrival, then cost. Dataset quotes plus simulated (mock_generated) options. Read-only: book through propose_plan lines.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrDriverTravelWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420322\", 'string') }}",
+            "purpose": "={{ $fromAI('purpose', \"'replacement', 'driver_return' or 'positioning'\", 'string') }}",
+            "from_city": "={{ $fromAI('from_city', \"Start city, or '' for the default (handover city)\", 'string') }}",
+            "to_city": "={{ $fromAI('to_city', \"Destination city; for replacement the handover city, '' = near the last known position\", 'string') }}",
+            "earliest": "={{ $fromAI('earliest', \"ISO UTC earliest departure, or '' for now\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "purpose",
+              "displayName": "purpose",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "from_city",
+              "displayName": "from_city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "to_city",
+              "displayName": "to_city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "earliest",
+              "displayName": "earliest",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        1080,
+        300
+      ],
+      "id": "045d7880-5212-b2b3-eb61-9a1216ee506d"
+    },
+    {
+      "name": "propose_plan",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Save YOUR part of the plan as a checked draft: bookings, costs, delivery-date change, cancellation, driver change, driver note, buyer and delivery-contact drafts. Code re-checks every option and price. A coordinator merges the drafts of every workflow on this event into ONE plan (with fastest / cheapest / balanced options for the buyer when the transport choice changes date or cost) and files it for a person. When you were called by another workflow it returns checked DRAFT lines instead.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrProposePlanWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420322\", 'string') }}",
+            "lines": "={{ $fromAI('lines', \"JSON array of plan lines, ids and times only from tools: {kind:'book_ferry',option_id} | {kind:'book_train' or 'book_flight',option_id,from_city,to_city,earliest,purpose,who} | {kind:'book_hotel',city,nights,detail} | {kind:'approve_cost',expense_id} or {kind:'approve_cost',amount_eur,detail} | {kind:'change_delivery_window',start_at,end_at} | {kind:'cancel_delivery',detail} | {kind:'reassign_driver',driver_id,detail} | {kind:'notify_driver',detail} | {kind:'staff_task',detail} or {kind:'staff_task',detail,before_booking:true} (only for a check a person must finish before anything in the plan is booked, e.g. cancel an old booking first; it opens at once and the plan cannot be approved until it is done) | {kind:'buyer_decision',detail}\", 'string') }}",
+            "customer_message": "={{ $fromAI('customer_message', \"Your draft for the buyer (the coordinator writes the final one; a person approves it). '' if the buyer needs no message\", 'string') }}",
+            "rationale": "={{ $fromAI('rationale', \"Why this plan, from evidence\", 'string') }}",
+            "evidence_refs": "={{ $fromAI('evidence_refs', \"Comma-separated ids relied on (alert-, incident-, msg-, track-, expense-, travel-, timeline)\", 'string') }}",
+            "ready_at": "={{ $fromAI('ready_at', \"Same ready_at you gave plan_rebooking, or ''\", 'string') }}",
+            "mode": "={{ $('Start').first().json.mode }}",
+            "delivery_contact_message": "={{ $fromAI('delivery_contact_message', \"Draft for the delivery contact (snapshot.delivery_contact) when the delivery time changes, '' if none\", 'string') }}",
+            "run_id": "={{ $('Start').first().json.mode === 'sub' ? '' : $('Start').first().json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "lines",
+              "displayName": "lines",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "customer_message",
+              "displayName": "customer_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "rationale",
+              "displayName": "rationale",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "evidence_refs",
+              "displayName": "evidence_refs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ready_at",
+              "displayName": "ready_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "delivery_contact_message",
+              "displayName": "delivery_contact_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        1240,
+        300
+      ],
+      "id": "c48acc29-a3c7-1afc-f53c-3f8c49789f6b"
+    },
+    {
+      "name": "create_employee_task",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Hand something to a Bahn employee, no approval needed. priority 'urgent' only when the driver does not answer AND tracking is off or the car has stopped (code checks this and lowers it to 'top' otherwise); 'top' for danger, an incident or a driver who cannot continue; 'normal' for anything a person must look at (recovery price, a message nobody can place, a paper to chase). Their answer wakes you.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrEscalateWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420322\", 'string') }}",
+            "reason": "={{ $fromAI('reason', \"Why this is urgent, one sentence\", 'string') }}",
+            "last_known_location": "={{ $fromAI('last_known_location', \"From check_journey last_known_position, e.g. 'near Hamburg (estimate) at 2026-10-21T08:10Z'\", 'string') }}",
+            "task": "={{ $fromAI('task', \"What the person must do now, e.g. call the driver\", 'string') }}",
+            "priority": "={{ $fromAI('priority', \"'urgent', 'top' or 'normal'\", 'string') }}",
+            "info": "={{ $fromAI('info', \"Facts the person needs to decide, e.g. replacement driver options with arrival times, or ''\", 'string') }}",
+            "workflow": "{{KEY}}",
+            "ask_time": "={{ $fromAI('ask_time', \"'ready' when you need the time the car is ready after a repair or recovery, 'handover' when you need the time a driver or replacement can start driving, else ''\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "last_known_location",
+              "displayName": "last_known_location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "task",
+              "displayName": "task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "info",
+              "displayName": "info",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ask_time",
+              "displayName": "ask_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        1400,
+        300
+      ],
+      "id": "3f5b8c53-6c61-cf4e-c04d-8ad949e8da05"
+    },
+    {
+      "name": "close_case",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Close the case without a person when nothing needs a decision. Code rules and the GLiDE decision model check it; may refuse. Give a reason listing what you checked.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Y78nly3QoP0HWn1H"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', 'Order reference like CD-420322', 'string') }}",
+            "reason": "={{ $fromAI('reason', 'What you checked and why nothing needs a decision', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        1560,
+        300
+      ],
+      "id": "7ddefc73-53fd-ec19-2934-74493c1ca05f"
+    },
+    {
+      "name": "journey_disruption",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "parameters": {
+        "description": "Ask the Journey workflow what this problem does to timing. It checks the road estimate, ferry rebooking, hotel or a new delivery window and returns DRAFT plan lines plus a buyer draft. Nothing is filed: put its lines into YOUR one plan.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrJourneyWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420322\", 'string') }}",
+            "input": "={{ $fromAI('input', \"What happened, where the car is, and when it can move again (ISO UTC) if known\", 'string') }}",
+            "session_id": "={{ $('Start').first().json.session_id + '-journey' }}",
+            "mode": "sub"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "input",
+              "displayName": "input",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "position": [
+        1720,
+        300
+      ],
+      "id": "5cd7d502-a412-bda0-51b0-bebffbc5999f"
+    },
+    {
+      "id": "tpl-logstage",
+      "name": "log_stage",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "description": "Record that you finished one of YOUR stages (listed in your instructions) with a one-line result, e.g. stage safety: \"driver safe on hard shoulder A7 km 112\". A re-plan resumes after finished stages instead of starting over.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "OtrLogStageWf01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $fromAI('order_ref', \"Order reference like CD-420322\", 'string') }}",
+            "workflow": "{{KEY}}",
+            "stage": "={{ $fromAI('stage', \"One of your stage names\", 'string') }}",
+            "result": "={{ $fromAI('result', \"One-line result of that stage\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "stage",
+              "displayName": "stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "result",
+              "displayName": "result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "otr-load-prompt",
+      "name": "Load prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "LangfuseBasic001",
+          "name": "BAHN Langfuse"
+        }
+      },
+      "parameters": {
+        "url": "{{LANGFUSE_URL}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "label",
+              "value": "production"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      }
+    },
+    {
+      "id": "otr-prompt",
+      "name": "Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "{{PROMPT_CODE}}"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Load prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent": {
+      "main": [
+        [
+          {
+            "node": "Return",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku 5.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_order_context": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "message_driver": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_journey": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "plan_rebooking": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "plan_driver_travel": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "propose_plan": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "close_case": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "journey_disruption": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_employee_task": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "log_stage": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load prompt": {
+      "main": [
+        [
+          {
+            "node": "Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt": {
+      "main": [
+        [
+          {
+            "node": "Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

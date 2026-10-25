@@ -1,0 +1,40 @@
+# Local secrets and environment-specific files
+.env
+.env.*
+!.env.example
+BAHN/build/n8n/promptfoo/out/
+.promptfoo/
+
+# Exclude non-tracked root files and directories
+/0
+/Voice.m4a
+/transcript.txt
+/.claude/
+/velho/
+/flow_automation/
+/EVENT-INFO.md
+/MATRIX-OS-CHALLENGE.md
+
+# Dependencies, build output, local database folders, and logs
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+*.log
+logs/
+*.sqlite
+*.sqlite3
+*.db
+.pglite/
+pgdata/
+promptfoo/out/
+
+# Velho-only feature files
+ai-docs/features/F-003-*.md
+ai-docs/features/F-011-*.md
+ai-docs/features/F-013-*.md
+ai-docs/features/F-014-*.md
+ai-docs/features/F-016-*.md
+ai-docs/features/F-017-*.md

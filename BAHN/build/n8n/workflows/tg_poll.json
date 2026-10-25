@@ -1,0 +1,243 @@
+{
+  "id": "OtrTgPollWf01",
+  "name": "BAHN tool · tg_poll",
+  "nodes": [
+    {
+      "id": "tick",
+      "name": "Every 5 s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "off",
+      "name": "Offset",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "tg_update_offset"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "upd",
+      "name": "Get updates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getUpdates?timeout=0&offset={{ Number($json.value) || 0 }}&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D",
+        "options": {
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "norm",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Real Telegram updates in the demo group -> the same shape sim_person sends. Bot messages and other chats are ignored.\nconst ups = $json.result || [];\nif (!ups.length) return [];\nconst offset = String(Math.max(...ups.map((u) => u.update_id)) + 1), demo = String($env.TELEGRAM_DEMO_CHAT_ID || '');\nconst out = [];\nfor (const u of ups) {\n  const m = u.message, c = u.callback_query;\n        // Photos, voice, video and files: the file id goes along; tg_inbound downloads it and turns it into text.\n      const media = !m ? null : m.photo ? { kind: 'photo', file_id: m.photo.at(-1).file_id, mime: 'image/jpeg' } : m.voice ? { kind: 'voice', file_id: m.voice.file_id, mime: m.voice.mime_type }\n        : m.audio ? { kind: 'audio', file_id: m.audio.file_id, mime: m.audio.mime_type } : m.video ? { kind: 'video', file_id: m.video.file_id, mime: m.video.mime_type || 'video/mp4' }\n        : m.video_note ? { kind: 'video_note', file_id: m.video_note.file_id, mime: 'video/mp4' } : m.document ? { kind: 'document', file_id: m.document.file_id, mime: m.document.mime_type, name: m.document.file_name } : null;\n  if (m && !m.from?.is_bot && String(m.chat?.id) === demo && (m.text || m.caption || media)) out.push({ kind: 'message', text: m.text || m.caption || '', data: '', media, from_id: String(m.from?.id || ''), reply_to_tg_id: String(m.reply_to_message?.message_id || ''), from_name: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' '), sim: false });\n  if (c && String(c.message?.chat?.id) === demo) out.push({ kind: 'callback', text: c.message?.reply_markup?.inline_keyboard?.flat().find((b) => b.callback_data === c.data)?.text || '', data: c.data, reply_to_tg_id: String(c.message?.message_id || ''), from_name: [c.from?.first_name, c.from?.last_name].filter(Boolean).join(' '), sim: false, callback_id: c.id, from_id: String(c.from?.id || '') });\n}\nreturn [{ json: { offset, updates: out } }];"
+      }
+    },
+    {
+      "id": "save",
+      "name": "Save offset",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SettingsTable001"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "tg_update_offset"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "value": "={{ $json.offset }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "value",
+              "displayName": "value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "each",
+      "name": "Each update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $('Normalize').first().json.updates.map((u) => ({ json: u }));"
+      }
+    },
+    {
+      "id": "fwd",
+      "name": "Forward",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:5678/webhook/bahn/tg-in",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 s": {
+      "main": [
+        [
+          {
+            "node": "Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offset": {
+      "main": [
+        [
+          {
+            "node": "Get updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get updates": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Save offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save offset": {
+      "main": [
+        [
+          {
+            "node": "Each update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Each update": {
+      "main": [
+        [
+          {
+            "node": "Forward",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false
+  }
+}

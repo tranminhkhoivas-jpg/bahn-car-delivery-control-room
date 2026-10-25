@@ -1,0 +1,167 @@
+{
+  "name": "BAHN tool · plan_driver_travel",
+  "id": "OtrDriverTravelWf01",
+  "nodes": [
+    {
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "purpose",
+              "type": "string"
+            },
+            {
+              "name": "from_city",
+              "type": "string"
+            },
+            {
+              "name": "to_city",
+              "type": "string"
+            },
+            {
+              "name": "earliest",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "ff63f2b1-e099-a079-d529-04c171d13a0a",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Get context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "db6d9ed1-395c-771a-0450-176e34a06854",
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "name": "Roster",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "A8MTWlClXgMKbxXi"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_ref",
+              "condition": "eq",
+              "keyValue": "REF-DRIVERS"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "2b371356-5927-5bb0-920d-4c572f6f279b",
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "name": "Plan travel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Train/flight planning for drivers, by code. purpose:\n//  replacement      -> pick up to 3 free drivers nearest the handover city and their best train/flight there\n//  driver_return    -> get the current driver home (default: from the handover city to their home city)\n//  positioning      -> any from_city -> to_city\n// @include travel.js\nconst i = $('Start').first().json;\nconst c = $('Get context').first().json;\nif (!c.found) return [{ json: { ok: false, error: c.error } }];\nconst s = c.snapshot;\nconst roster = (() => { try { return JSON.parse($('Roster').all().map((x) => x.json).find((r) => r.context)?.context || '{}').drivers || []; } catch (e) { return []; } })();\nconst now = Date.parse(s.snapshot_now);\n// Nobody travels before a person approves: never earlier than now + the approval buffer (Settings page).\nconst earliest = Math.max(i.earliest ? Date.parse(i.earliest) : now, now + c.settings.approval_buffer_min * 6e4 + c.settings.booking_slack_min * 6e4);\nif (Number.isNaN(earliest)) return [{ json: { ok: false, error: `earliest '${i.earliest}' is not an ISO time` } }];\nconst purpose = String(i.purpose || 'positioning').trim();\nconst last = (s.tracking_latest || []).slice(-1)[0];\nconst handover = cityKey(i.to_city) || (last ? nearestCity(s.pickup?.city, s.delivery?.city, last.progress_fraction)?.city : cityKey(s.pickup?.city));\nconst current = (s.assignments || []).find((a) => a.status === 'IN_PROGRESS') || (s.assignments || [])[0] || {};\nconst quotes = s.travel_options || [];\nconst failed = (c.plan_steps || []).filter((p) => ['book_train', 'book_flight'].includes(p.kind) && p.status === 'failed').map((p) => p.ref);\nconst brief = (r) => r.ok ? r.options.slice(0, 4) : [];\n\n// The trip to the car counts against the replacement's working day; past the daily limit they rest first (Settings page numbers).\nconst workday = (arrives, used) => !arrives ? {} : { drive_used_min: Math.min(used, c.settings.daily_drive_max_min),\n  can_start_driving: isoMin(Date.parse(arrives) + (used >= c.settings.daily_drive_max_min ? c.settings.daily_rest_min * 6e4 : 0)),\n  hours_note: `trip uses ${Math.round(used / 6) / 10} h of the ${c.settings.daily_drive_max_min / 60} h day; pass drive_used_min and from_time=can_start_driving to check_journey` };\nif (purpose === 'replacement') {\n  if (!roster.length) return [{ json: { ok: false, error: 'Driver roster (REF-DRIVERS) not loaded; run seed.mjs.' } }];\n  const free = roster.filter((d) => d.active && !d.busy && d.id !== current.driver_id && cityOf(d.home_city));\n  const near = free.map((d) => ({ ...d, km: cityKey(d.home_city) === handover ? 0 : distKm(d.home_city, handover) })).sort((a, b) => a.km - b.km).slice(0, 3);\n  const candidates = near.map((d) => {\n    if (d.km === 0) return { driver_id: d.id, name: d.display_name, home_city: d.home_city, km_to_handover: 0, travel: 'lives in the handover city: local transfer only', best_option: null, arrives: isoMin(earliest + 36e5), ...workday(isoMin(earliest + 36e5), 60) };\n    const r = searchTravel({ quotes, from: d.home_city, to: handover, earliest, failed });\n    const b = r.options?.[0], used = b ? Math.round((Date.parse(b.arrives) - Date.parse(b.leave_at || b.departs)) / 6e4) : 0;\n    return { driver_id: d.id, name: d.display_name, home_city: d.home_city, km_to_handover: d.km, best_option: b || null, other_options: brief(r).slice(1, 3), arrives: b?.arrives || null, ...workday(b?.arrives, used) };\n  }).sort((a, b) => (Date.parse(a.arrives) || Infinity) - (Date.parse(b.arrives) || Infinity));\n  return [{ json: { ok: true, order_ref: c.order_ref, purpose, handover_city: handover, current_driver: current.driver || current.driver_id || null,\n    rule: 'free = active and not on another job at snapshot time; nearest 3 by distance from home city, then ranked by earliest arrival',\n    candidates, warning: 'mock_generated trains/flights are simulated; dataset_quote prices are quotes, not bookings. Nothing is booked until a person approves the plan.' } }];\n}\n\nlet from = cityKey(i.from_city), to = cityKey(i.to_city);\nif (purpose === 'driver_return') {\n  from = from || handover || cityKey(s.delivery?.city);\n  to = to || cityKey(roster.find((d) => d.id === current.driver_id)?.home_city);\n}\nif (!from || !to) return [{ json: { ok: false, error: 'from_city and to_city are required (driver home city unknown)' } }];\nconst r = searchTravel({ quotes, from, to, earliest, failed });\nif (!r.ok) return [{ json: r }];\nreturn [{ json: { ok: true, order_ref: c.order_ref, purpose, from_city: from, to_city: to, km: r.km, earliest: isoMin(earliest),\n  recommended: r.recommended, summary: r.options[0] ? `Best: ${r.options[0].mode} ${r.options[0].provider} ${r.options[0].departs} -> arrives ${r.options[0].arrives}, EUR ${r.options[0].cost_eur} (${r.options[0].source}).` : 'No usable train or flight in the search range.',\n  ranking: 'earliest arrival, then cost', options: r.options.slice(0, 6), not_usable: r.not_usable.slice(0, 8),\n  warning: 'mock_generated trains/flights are simulated; dataset_quote prices are quotes, not bookings.' } }];"
+      },
+      "id": "05a193fa-4339-550d-9a87-87e0a96bbc2a",
+      "position": [
+        660,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get context": {
+      "main": [
+        [
+          {
+            "node": "Roster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Roster": {
+      "main": [
+        [
+          {
+            "node": "Plan travel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

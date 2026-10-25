@@ -1,0 +1,121 @@
+{
+  "name": "BAHN tool · check_journey",
+  "id": "OtrCheckJourneyWf01",
+  "nodes": [
+    {
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_ref",
+              "type": "string"
+            },
+            {
+              "name": "from_time",
+              "type": "string"
+            },
+            {
+              "name": "km_left",
+              "type": "string"
+            },
+            {
+              "name": "drive_used_min",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "9530e3ed-7cb5-258e-f070-768ddbbebd9b",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Get context",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "XrWxSa9iCdGT4eNx"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_ref": "={{ $json.order_ref }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_ref",
+              "displayName": "order_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "295e960b-db65-95cd-4441-37d488f843fe",
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "name": "Check journey",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Journey check by code, no LLM: is the tracking gap normal, where was the car last, and can it still arrive in the promise window by road?\n// @include travel.js\nconst i = $('Start').first().json;\nconst c = $json;\nif (!c.found) return [{ json: { ok: false, error: c.error } }];\n// Placeholder numbers from the Settings page (otr_settings): tracker silence, road speed, EU driving rules, on-time spare.\nconst S = c.settings, NORMAL_GAP_MIN = S.normal_gap_min, SPEED_KMH = S.road_speed_kmh, BUFFER_H = S.on_time_spare_h;\nconst BLOCK = S.break_after_min, BREAK = S.break_min, DAY = S.daily_drive_max_min, REST = S.daily_rest_min;\nconst s = c.snapshot, H = 36e5, M = 6e4;\nconst now = Date.parse(s.snapshot_now);\nconst win = (s.time_windows || []).find((w) => w.purpose === 'CUSTOMER_DELIVERY_PROMISE');\nconst pickup = (s.time_windows || []).find((w) => w.purpose === 'SELECTED_PICKUP_SLOT');\nconst last = (s.tracking_latest || []).slice(-1)[0];\nconst res = s.travel_reservations || [];\n\n// 1) Tracking gap: normal or not.\nconst gapMin = last ? Math.round((now - Date.parse(last.observed_at)) / M) : null;\nconst ferryNow = res.find((r) => r.kind === 'FERRY' && Date.parse(r.departure_at) - 2 * H <= now && now <= Date.parse(r.expected_arrival_at));\nconst hotelNow = res.find((r) => r.kind === 'HOTEL' && Date.parse(r.check_in_at) <= now && now <= Date.parse(r.check_out_at));\nconst beforePickup = (pickup && now < Date.parse(pickup.start_at)) || ['NEW', 'WAITING_FOR_PICKUP'].includes(s.order.status);\nlet normal, why;\nif (beforePickup) { normal = true; why = 'car not picked up yet (before the pickup slot), so no tracking is expected'; }\nelse if (ferryNow) { normal = true; why = `on the ferry ${ferryNow.route_label || ''} (${ferryNow.departure_at} -> ${ferryNow.expected_arrival_at}); tracking often drops at sea`; }\nelse if (hotelNow) { normal = true; why = `planned hotel stop in ${hotelNow.city} until ${hotelNow.check_out_at}`; }\nelse if (gapMin === null) { normal = false; why = 'car should be moving but there is no tracking at all'; }\nelse if (gapMin <= NORMAL_GAP_MIN) { normal = true; why = `last update ${gapMin} min ago (up to ${NORMAL_GAP_MIN} min is normal)`; }\nelse { normal = false; why = `no update for ${Math.floor(gapMin / 60)} h ${gapMin % 60} min, with no ferry or planned stop to explain it`; }\n\n// Car stopped: the last two positions, at least 30 min apart, show under 1 km of progress (the dataset has no speed).\nconst prev = (s.tracking_latest || []).slice(-2)[0];\nconst stopped = Boolean(prev && last && prev !== last && Date.parse(last.observed_at) - Date.parse(prev.observed_at) >= 30 * M && Math.abs(prev.distance_remaining_km - last.distance_remaining_km) < 1);\n\n// 2) Last known position.\nconst pos = last ? nearestCity(s.pickup?.city, s.delivery?.city, last.progress_fraction) : null;\n\n// 3) Road arrival: km left at road speed, a break after each driving block, daily rest after the daily driving limit (EU rules).\n// drive_used_min: minutes already worked today (a replacement driver's train or flight there); else fresh hours (the dataset does not say).\n// No tracking yet (car not picked up): the order's planned route gives the distance (legs not yet completed).\nconst planKm = (s.route_plan?.legs || []).filter((l) => l.status !== 'COMPLETED').reduce((t, l) => t + (Number(l.distance_km) || 0), 0) || null;\nconst km = i.km_left !== '' && i.km_left != null && !Number.isNaN(Number(i.km_left)) ? Number(i.km_left) : last?.distance_remaining_km ?? planKm;\nconst kmFrom = i.km_left !== '' && i.km_left != null ? 'driver' : last?.distance_remaining_km != null ? 'tracking' : planKm ? 'route plan' : '';\nconst from = i.from_time ? Date.parse(i.from_time) : now;\nconst ferryAhead = res.find((r) => r.kind === 'FERRY' && Date.parse(r.departure_at) > now);\nlet road = null, eta = null, basis;\nif (ferryAhead || ferryNow) {\n  eta = last?.estimated_delivery_at ? Date.parse(last.estimated_delivery_at) : null;\n  basis = 'a ferry leg is part of the trip, so the tracking ETA is used; for ferry timing call plan_rebooking';\n} else if (km != null && !Number.isNaN(from)) {\n  let t = from, left = km / SPEED_KMH * 60, day = Math.min(DAY, Number(i.drive_used_min) || 0), block = 0, breaks = 0, rest = 0;\n  while (left > 0) {\n    const step = Math.min(left, BLOCK - block, DAY - day);\n    t += step * M; left -= step; block += step; day += step;\n    if (left <= 0) break;\n    if (day >= DAY) { t += REST * M; rest += REST; day = 0; block = 0; } else if (block >= BLOCK) { t += BREAK * M; breaks += BREAK; block = 0; }\n  }\n  eta = t;\n  road = { km_left: km, drive_hours: +(km / SPEED_KMH).toFixed(1), break_hours: +(breaks / 60).toFixed(2), rest_hours: rest / 60, from: isoMin(from) };\n  basis = `${km} km (from ${kmFrom}) at ${SPEED_KMH} km/h + EU breaks and rest, from ${i.from_time ? 'the given restart time' : 'now'}`;\n  // The driver app's own ETA may know about traffic or a stop we cannot see; the slower estimate wins (not for a restart time).\n  const appEta = !i.from_time && last?.estimated_delivery_at ? Date.parse(last.estimated_delivery_at) : null;\n  if (appEta > eta) { basis += `; the driver app ETA ${isoMin(appEta)} is later, so it is used`; eta = appEta; }\n} else basis = 'no km left in tracking or route plan: ask the driver for position';\n\nlet verdict = 'unknown', bufferH = null, lateH = null, suggested = null;\nif (eta && win) {\n  const end = Date.parse(win.end_at), start = Date.parse(win.start_at);\n  bufferH = +((end - eta) / H).toFixed(1);\n  lateH = +Math.max(0, (eta - end) / H).toFixed(1);\n  verdict = bufferH >= BUFFER_H ? 'on_time' : bufferH >= 0 ? 'at_risk' : 'late';\n  if (verdict === 'late') { // new window: same length as the old one (min 2 h), starting at the next full hour after arrival\n    const len = Math.max(2 * H, end - start), st = Math.ceil(eta / H) * H;\n    suggested = { start_at: isoMin(st), end_at: isoMin(st + len) };\n  }\n}\nreturn [{ json: { ok: true, order_ref: c.order_ref, now: s.snapshot_now,\n  tracking: { last_observed_at: last?.observed_at || null, gap_minutes: gapMin, normal, why, stopped, km_left: last?.distance_remaining_km ?? null, progress: last?.progress_fraction ?? null, dataset_eta: last?.estimated_delivery_at || null, location_quality: last?.location_quality || null },\n  last_known_position: pos ? { near_city: pos.city, lat: pos.lat, lon: pos.lon, observed_at: last.observed_at, basis: `straight line ${s.pickup?.city} -> ${s.delivery?.city} at ${Math.round(last.progress_fraction * 100)}% progress, nearest city (estimate)` } : null,\n  road, eta: eta ? isoMin(eta) : null, eta_basis: basis,\n  promise_window: win ? `${win.start_at} -> ${win.end_at}` : null,\n  verdict, buffer_hours: bufferH, late_hours: lateH, suggested_new_window: suggested,\n  rule: `on_time = at least ${BUFFER_H} h before the window ends; at_risk = before the end but less slack; late = after the end` } }];"
+      },
+      "id": "f4e2a52a-48a9-a91a-b23b-6cc04965abff",
+      "position": [
+        440,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Get context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get context": {
+      "main": [
+        [
+          {
+            "node": "Check journey",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
